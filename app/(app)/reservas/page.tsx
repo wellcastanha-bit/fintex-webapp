@@ -1,7 +1,7 @@
 // app/(app)/reservas/page.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import Link from "next/link";
 
 import {
@@ -21,29 +21,6 @@ import type { LocacaoStatus, Reserva } from "./components/types";
 import { CardShell, FieldLabel, FieldShell, Input, AquaButton, TimeSelect } from "./components/ui";
 import { MonthCalendar } from "./components/calendar";
 import { ReservasDoDia } from "./components/reservas-do-dia";
-
-const EVT_REFRESH = "reservas:refresh";
-
-// ✅ mapeia do backend (snake_case) -> Reserva (frontend)
-function apiToReserva(row: any): Reserva {
-  return {
-    id: String(row?.id ?? `r-${Date.now()}`),
-    dataISO: String(row?.date ?? ""),
-    chegada: String(row?.arrival_time ?? ""),
-    saida: row?.departure_time ? String(row.departure_time) : "",
-    pessoas: Number(row?.people ?? 1),
-    nome: String(row?.name ?? "Sem nome"),
-    telefone: row?.phone ? String(row.phone) : "",
-    mesa: row?.table_label ? String(row.table_label) : "",
-    observacao: row?.description ? String(row.description) : "",
-    locacaoDesc: row?.locacao_description ? String(row.locacao_description) : "",
-    locacaoValor:
-      row?.locacao_value === null || row?.locacao_value === undefined || row?.locacao_value === ""
-        ? null
-        : Number(row.locacao_value),
-    locacaoStatus: row?.locacao_status ? (String(row.locacao_status) as LocacaoStatus) : undefined,
-  };
-}
 
 export default function ReservasPage() {
   const today = useMemo(() => new Date(), []);
@@ -71,10 +48,10 @@ export default function ReservasPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  // ✅ agora é o “estado espelho” do backend (hidrata via GET)
+  // ✅ AGORA 100% LOCAL (sem backend / sem fetch)
   const [reservas, setReservas] = useState<Reserva[]>([]);
-  const [saving, setSaving] = useState(false);
-  const [loadingDay, setLoadingDay] = useState(false);
+  const [saving, setSaving] = useState(false); // mantém só pro UI
+  const [loadingDay, setLoadingDay] = useState(false); // mantém só pro UI
 
   const hasReservaByDay = useMemo(() => {
     const map: Record<string, boolean> = {};
@@ -155,129 +132,12 @@ export default function ReservasPage() {
     setConfirmDeleteId(null);
   };
 
-  // ✅ GET do backend (dia selecionado)
-  async function loadDay(iso: string) {
-    setLoadingDay(true);
-    try {
-      const res = await fetch(`/api/reservas?date=${encodeURIComponent(iso)}`, { cache: "no-store" });
-      const text = await res.text();
-      let json: any = null;
-      try {
-        json = text ? JSON.parse(text) : null;
-      } catch {
-        json = null;
-      }
-
-      if (!res.ok || !json?.ok) {
-        console.error("[ReservasPage] GET /api/reservas error:", {
-          status: res.status,
-          statusText: res.statusText,
-          body: text,
-        });
-        return;
-      }
-
-      const arr = Array.isArray(json.reservas) ? json.reservas : [];
-      const mapped = arr.map(apiToReserva);
-
-      // ✅ substitui somente as reservas daquele dia, mantendo outros dias já carregados (se existirem)
-      setReservas((cur) => {
-        const others = cur.filter((r) => r.dataISO !== iso);
-        return [...mapped, ...others];
-      });
-    } finally {
-      setLoadingDay(false);
-    }
-  }
-
-  // ✅ carrega quando muda o dia + escuta evento refresh
-  useEffect(() => {
-    loadDay(selectedISO);
-
-    const onRefresh = () => loadDay(selectedISO);
-    window.addEventListener(EVT_REFRESH, onRefresh);
-    return () => window.removeEventListener(EVT_REFRESH, onRefresh);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedISO]);
-
-  // ✅ POST (criar/editar)
-  async function postReservaBackend(payload: Reserva) {
-const body = {
-  id: payload.id, // ✅ ADD ISSO AQUI
-  date: payload.dataISO,
-  arrival_time: payload.chegada,
-  departure_time: payload.saida?.trim() ? payload.saida.trim() : null,
-  people: payload.pessoas,
-  name: payload.nome,
-  phone: payload.telefone?.trim() ? payload.telefone.trim() : null,
-  table_label: payload.mesa?.trim() ? payload.mesa.trim() : null,
-  description: payload.observacao?.trim() ? payload.observacao.trim() : null,
-  locacao_description: payload.locacaoDesc?.trim() ? payload.locacaoDesc.trim() : null,
-  locacao_value: typeof payload.locacaoValor === "number" ? payload.locacaoValor : null,
-  locacao_status: payload.locacaoStatus ?? null,
-};
-
-
-    const res = await fetch("/api/reservas", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-
-    const text = await res.text();
-    let json: any = null;
-    try {
-      json = text ? JSON.parse(text) : null;
-    } catch {
-      json = null;
-    }
-
-    if (!res.ok || !json?.ok) {
-      console.error("[ReservasPage] POST /api/reservas error:", {
-        status: res.status,
-        statusText: res.statusText,
-        body: text,
-      });
-      throw new Error(json?.error || "Falha ao salvar no backend.");
-    }
-
-    return json; // { ok: true, reserva: ... }
-  }
-
-  // ✅ DELETE backend
-  async function deleteReservaBackend(id: string) {
-    const res = await fetch(`/api/reservas?id=${encodeURIComponent(id)}`, { method: "DELETE" });
-    const text = await res.text();
-    let json: any = null;
-    try {
-      json = text ? JSON.parse(text) : null;
-    } catch {
-      json = null;
-    }
-
-    if (!res.ok || !json?.ok) {
-      console.error("[ReservasPage] DELETE /api/reservas error:", {
-        status: res.status,
-        statusText: res.statusText,
-        body: text,
-      });
-      throw new Error(json?.error || "Falha ao excluir no backend.");
-    }
-  }
-
   const doDelete = async (id: string) => {
     setSaving(true);
     try {
-      await deleteReservaBackend(id);
-
-      // remove local e recarrega o dia pra garantir estado “espelho”
       setReservas((cur) => cur.filter((x) => x.id !== id));
       setConfirmDeleteId(null);
       if (editingId === id) setEditingId(null);
-
-      window.dispatchEvent(new Event(EVT_REFRESH));
-    } catch (e) {
-      console.error("[ReservasPage] delete failed:", e);
     } finally {
       setSaving(false);
     }
@@ -293,10 +153,10 @@ const body = {
     const locValNum = brlToNumber(locacaoValor);
     const hasLocacao = !!locDesc || locValNum > 0;
 
-    const localId = editingId ? editingId : `r-${Date.now()}`;
+    const id = editingId ? editingId : `r-${Date.now()}`;
 
     const payload: Reserva = {
-      id: localId,
+      id,
       dataISO: selectedISO,
       chegada: chegada || "19:00",
       saida: saida || "",
@@ -320,43 +180,24 @@ const body = {
 
     setSaving(true);
     try {
-      // 1) POST no backend
-      const json = await postReservaBackend(payload);
-      const backendId = String(json?.reserva?.id || payload.id);
-
-      // 2) atualiza local
-      const finalPayload: Reserva = { ...payload, id: backendId };
-
       setReservas((cur) => {
-        const idx = cur.findIndex((x) => x.id === payload.id || x.id === backendId);
+        const idx = cur.findIndex((x) => x.id === id);
         if (idx >= 0) {
           const copy = cur.slice();
-          copy[idx] = finalPayload;
+          copy[idx] = payload;
           return copy;
         }
-        return [finalPayload, ...cur];
+        return [payload, ...cur];
       });
 
-      // 3) recarrega dia do backend (mão dupla)
-      window.dispatchEvent(new Event(EVT_REFRESH));
-
       resetForm();
-    } catch (e) {
-      console.error("[ReservasPage] save failed:", e);
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div
-      style={{
-        width: "100%",
-        minWidth: 0,
-        boxSizing: "border-box",
-        position: "relative",
-      }}
-    >
+    <div style={{ width: "100%", minWidth: 0, boxSizing: "border-box", position: "relative" }}>
       {/* TOPO */}
       <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 18 }}>
         <div style={{ fontWeight: 900, fontSize: 34, color: "#ffffff" }}>Reservas</div>
@@ -382,7 +223,7 @@ const body = {
             </span>
           ) : (
             <span>
-              Backend: <span style={{ color: AQUA }}>OK</span>
+              Local: <span style={{ color: AQUA }}>OK</span>
             </span>
           )}
         </div>
@@ -562,7 +403,7 @@ const body = {
             </div>
 
             {editingId && (
-              <div style={{ gridColumn: "1 / -1", color: "#eaf0ff", fontWeight: 900, opacity: 0.75, fontSize: 12 }}></div>
+              <div style={{ gridColumn: "1 / -1", color: "#eaf0ff", fontWeight: 900, opacity: 0.75, fontSize: 12 }} />
             )}
           </div>
         </CardShell>
