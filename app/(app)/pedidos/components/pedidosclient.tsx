@@ -1,8 +1,4 @@
-// =========================================
-// app/pedidos/pedidosclient.tsx
-// ✅ DATA | HORA (hora vem do created_at do backend)
-// ✅ não mexe no resto
-// =========================================
+"use client";
 
 /* =========================================
    app/pedidos/pedidosclient.tsx
@@ -10,8 +6,8 @@
    ✅ Agora: permite editar RESPONSÁVEL e STATUS
    ✅ Ao editar na tabela: PATCH /api/orders -> Supabase
    ✅ Atualiza a linha na hora (optimista) e mantém na tela
+   ✅ NOVO: FILTRA POR DIA OPERACIONAL (cutoff 05:00)
 ========================================= */
-"use client";
 
 import React, { useMemo, useRef, useState } from "react";
 
@@ -54,8 +50,7 @@ function dayFromISO(iso: string) {
   return `${dd}/${mm}`; // ✅ dd/mm
 }
 
-
-// ✅ NOVO: HH:mm a partir do created_at (local do navegador)
+// ✅ HH:mm a partir do created_at (local do navegador)
 function hourFromISO(iso: string) {
   const d = new Date(iso);
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
@@ -77,12 +72,50 @@ function toNumSafe(v: any) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function toISODateLocal(d: Date) {
+  const y = d.getFullYear();
+  const m = pad2(d.getMonth() + 1);
+  const dd = pad2(d.getDate());
+  return `${y}-${m}-${dd}`;
+}
+
+function getOperationalWindow(opts?: { cutoffHour?: number; operationalISO?: string }) {
+  const cutoffHour = typeof opts?.cutoffHour === "number" ? opts!.cutoffHour : 5;
+
+  const start = new Date();
+  if (opts?.operationalISO) {
+    const [yy, mm, dd] = opts.operationalISO.split("-").map((x) => Number(x));
+    const anchor = new Date(yy, (mm || 1) - 1, dd || 1, 0, 0, 0, 0);
+    start.setTime(anchor.getTime());
+  }
+
+  if (!opts?.operationalISO) {
+    const now = new Date();
+    const base = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    if (now.getHours() < cutoffHour) base.setDate(base.getDate() - 1);
+    start.setTime(base.getTime());
+  }
+
+  start.setHours(cutoffHour, 0, 0, 0);
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  const operationalISO = toISODateLocal(start);
+
+  return { start, end, operationalISO };
+}
+
+function isInWindow(iso: string | undefined, start: Date, end: Date) {
+  if (!iso) return false;
+  const t = new Date(String(iso)).getTime();
+  if (!Number.isFinite(t)) return false;
+  return t >= start.getTime() && t < end.getTime();
+}
+
 function mapOrderToRow(o: OrdersSourceItem): Row {
   const id = String(o?.id ?? "");
   const createdAt = String(o?.created_at ?? new Date().toISOString());
 
   const data = dayFromISO(createdAt);
-  const hora = hourFromISO(createdAt); // ✅ NOVO
+  const hora = hourFromISO(createdAt);
 
   const cliente = String(o?.cliente_nome ?? "");
   const plataforma = String(o?.plataforma ?? "").toUpperCase();
@@ -105,7 +138,7 @@ function mapOrderToRow(o: OrdersSourceItem): Row {
     __ROWNUMBER: 0,
 
     [normKey("DATA")]: data,
-    [normKey("HORA")]: hora, // ✅ antes era MÊS
+    [normKey("HORA")]: hora,
     [normKey("CLIENTE")]: cliente,
     [normKey("PLATAFORMA")]: plataforma,
     [normKey("ATENDIMENTO")]: atendimento,
@@ -127,6 +160,9 @@ type Props = {
   orders: OrdersSourceItem[];
   onRequestDelete?: (id: string) => Promise<void> | void;
   highlightIdsFromParent?: string[];
+  filterOperationalDay?: boolean;
+  operationalISO?: string; // YYYY-MM-DD (âncora)
+  cutoffHour?: number; // ✅ opcional (padrão 5)
 };
 
 type PatchPayload = { id: string; responsavel?: string | null; status?: string | null };
@@ -142,14 +178,30 @@ async function patchOrder(payload: PatchPayload) {
   return json?.row as OrdersSourceItem | undefined;
 }
 
-export default function PedidosClient({ orders, onRequestDelete, highlightIdsFromParent }: Props) {
+export default function PedidosClient({
+  orders,
+  onRequestDelete,
+  highlightIdsFromParent,
+  filterOperationalDay = true,
+  operationalISO,
+  cutoffHour = 5,
+}: Props) {
   const [q, setQ] = useState<string>("");
 
-  const [rowsState, setRowsState] = useState<Row[]>(() => (orders || []).map(mapOrderToRow));
+  // ✅ fonte filtrada pelo dia operacional (ANTES de mapear)
+  const sourceOrders = useMemo(() => {
+    const list = orders || [];
+    if (!filterOperationalDay) return list;
+
+    const win = getOperationalWindow({ cutoffHour, operationalISO });
+    return list.filter((o) => isInWindow(o?.created_at, win.start, win.end));
+  }, [orders, filterOperationalDay, operationalISO, cutoffHour]);
+
+  const [rowsState, setRowsState] = useState<Row[]>(() => (sourceOrders || []).map(mapOrderToRow));
 
   React.useEffect(() => {
-    setRowsState((orders || []).map(mapOrderToRow));
-  }, [orders]);
+    setRowsState((sourceOrders || []).map(mapOrderToRow));
+  }, [sourceOrders]);
 
   const [highlightIds, setHighlightIds] = useState<string[]>([]);
   const highlightSetRef = useRef<Set<string>>(new Set());

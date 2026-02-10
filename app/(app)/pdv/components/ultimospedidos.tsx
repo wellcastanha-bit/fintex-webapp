@@ -98,8 +98,7 @@ function dateBRFromISO(iso?: string) {
   return `${dd}/${mm}`;
 }
 
-
-// ✅ NOVO: HH:mm a partir do ISO (created_at do backend)
+// ✅ HH:mm a partir do ISO
 function hourFromISO(iso?: string) {
   if (!iso) return "-";
   const d = new Date(String(iso));
@@ -115,6 +114,52 @@ function paymentLabel(v: any) {
   if (s === "PIX") return "PIX";
   if (s === "DINHEIRO") return "Dinheiro";
   return (v ?? "-").toString();
+}
+
+function toISODateLocal(d: Date) {
+  const y = d.getFullYear();
+  const m = pad2(d.getMonth() + 1);
+  const dd = pad2(d.getDate());
+  return `${y}-${m}-${dd}`;
+}
+
+/**
+ * ✅ DIA OPERACIONAL:
+ * - cutoffHour = 5 => dia operacional começa 05:00 e vai até 04:59 do dia seguinte
+ * - se você passar operationalISO (YYYY-MM-DD), ele usa esse dia como "âncora" (05:00 desse dia)
+ */
+function getOperationalWindow(opts?: { cutoffHour?: number; operationalISO?: string }) {
+  const cutoffHour = typeof opts?.cutoffHour === "number" ? opts!.cutoffHour : 5;
+
+  const start = new Date();
+  if (opts?.operationalISO) {
+    // ancora no dia escolhido (local)
+    const [yy, mm, dd] = opts.operationalISO.split("-").map((x) => Number(x));
+    const anchor = new Date(yy, (mm || 1) - 1, dd || 1, 0, 0, 0, 0);
+    start.setTime(anchor.getTime());
+  }
+
+  // se não veio operationalISO, calcula "dia operacional de agora"
+  if (!opts?.operationalISO) {
+    const now = new Date();
+    const base = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    // se ainda é antes do cutoff, o dia operacional "começou ontem"
+    if (now.getHours() < cutoffHour) base.setDate(base.getDate() - 1);
+    start.setTime(base.getTime());
+  }
+
+  start.setHours(cutoffHour, 0, 0, 0);
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  const operationalISO = toISODateLocal(start);
+
+  return { start, end, operationalISO };
+}
+
+function isInWindow(iso: string | undefined, start: Date, end: Date) {
+  if (!iso) return false;
+  const t = new Date(String(iso)).getTime();
+  if (!Number.isFinite(t)) return false;
+  return t >= start.getTime() && t < end.getTime();
 }
 
 const AQUA_SOFT = "rgba(79,220,255,0.22)";
@@ -141,24 +186,21 @@ const headerStyle = (hover: boolean, width: number): React.CSSProperties => {
 type Props = {
   emptyText?: string;
   filterOperationalDay?: boolean;
-  operationalISO?: string; // YYYY-MM-DD
+  operationalISO?: string; // YYYY-MM-DD (âncora do dia operacional)
+  cutoffHour?: number; // ✅ opcional (padrão 5)
 };
 
 export default function UltimosPedidos({
   emptyText = "Nada para mostrar.",
   filterOperationalDay = true,
   operationalISO,
+  cutoffHour = 5,
 }: Props) {
   const [hoverHeader, setHoverHeader] = useState(false);
   const [orders, setOrders] = useState<UltimoPedidoUI[]>([]);
   const busyRef = useRef(false);
 
   const minWidth = useMemo(() => COLS.reduce((a, c) => a + c.w, 0), []);
-
-  function datePrefix10(iso?: string) {
-    const s = String(iso ?? "");
-    return s.length >= 10 ? s.slice(0, 10) : "";
-  }
 
   async function load() {
     if (busyRef.current) return;
@@ -169,7 +211,8 @@ export default function UltimosPedidos({
       const j = await r.json().catch(() => null);
 
       const rows = (r.ok && j?.ok ? (j.rows ?? []) : []) as UltimoPedidoUI[];
-      setOrders(rows.slice(0, 10));
+      // ✅ NÃO corta aqui (senão perde pedidos do dia)
+      setOrders(rows);
     } catch {
       setOrders([]);
     } finally {
@@ -189,16 +232,18 @@ export default function UltimosPedidos({
   }, []);
 
   const filteredSourceOrders = useMemo(() => {
-    const sliced = (orders || []).slice(0, 10);
+    const list = orders || [];
+    if (!filterOperationalDay) return list.slice(0, 10);
 
-    if (!filterOperationalDay) return sliced;
-    if (!operationalISO) return sliced;
-
-    return sliced.filter((o) => {
+    const win = getOperationalWindow({ cutoffHour, operationalISO });
+    const filtered = list.filter((o) => {
       const iso = o.order_date || o.created_at || "";
-      return datePrefix10(iso) === operationalISO;
+      return isInWindow(iso, win.start, win.end);
     });
-  }, [orders, operationalISO, filterOperationalDay]);
+
+    // ✅ agora sim limita
+    return filtered.slice(0, 10);
+  }, [orders, operationalISO, filterOperationalDay, cutoffHour]);
 
   const rows: Row[] = useMemo(() => {
     return (filteredSourceOrders || []).map((o, i) => {
@@ -207,8 +252,7 @@ export default function UltimosPedidos({
       const baseISO = o.order_date || o.created_at || "";
 
       out[normKey("DATA")] = dateBRFromISO(baseISO) || "-";
-
-      out[normKey("HORA")] = hourFromISO(baseISO) || "-"; // ✅ antes era MÊS
+      out[normKey("HORA")] = hourFromISO(baseISO) || "-";
 
       const cliente = o.customer_name ?? o.cliente_nome ?? "-";
       const plataforma = (o.platform ?? o.plataforma ?? "-").toString().toUpperCase();
