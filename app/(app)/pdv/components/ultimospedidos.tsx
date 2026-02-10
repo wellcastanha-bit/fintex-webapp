@@ -1,12 +1,14 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type MoneyLike = number | string | null | undefined;
 
 export type UltimoPedidoUI = {
   id?: string | number;
-  order_date?: string; // ISO (opcional)
+  order_date?: string;
+  created_at?: string;
+
   customer_name?: string;
   platform?: string;
   service_type?: string;
@@ -22,13 +24,22 @@ export type UltimoPedidoUI = {
 
   responsavel?: string;
   status?: string;
+
+  // compat com formato do PedidosClient
+  cliente_nome?: string | null;
+  plataforma?: string | null;
+  atendimento?: string | null;
+  valor_pago?: MoneyLike;
+  valor_final?: MoneyLike;
+  pagamento?: string | null;
+  bairro?: string | null;
 };
 
 type Row = Record<string, any>;
 
 const COLS = [
   { key: "DATA", label: "DATA", w: 90, type: "text" },
-  { key: "MÊS", label: "MÊS", w: 110, type: "text" },
+  { key: "HORA", label: "HORA", w: 90, type: "text" }, // ✅ antes era MÊS
   { key: "CLIENTE", label: "CLIENTE", w: 260, type: "text" },
   { key: "PLATAFORMA", label: "PLATAFORMA", w: 160, type: "text" },
   { key: "ATENDIMENTO", label: "ATENDIMENTO", w: 160, type: "text" },
@@ -74,18 +85,26 @@ function brl(v: any) {
   return `R$ ${n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-function dayFromISO(iso?: string) {
-  const s = String(iso ?? "");
-  return s.length >= 10 ? s.slice(8, 10) : "-";
+function pad2(n: number) {
+  return String(n).padStart(2, "0");
 }
 
-function monthLabelFromISO(iso?: string) {
-  const s = String(iso ?? "");
-  if (!s || s.length < 7) return "-";
-  const [yyyy, mm] = s.split("-");
-  const meses = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
-  const m = meses[(Number(mm) || 1) - 1] || "-";
-  return `${m}/${yyyy}`;
+function dateBRFromISO(iso?: string) {
+  if (!iso) return "-";
+  const d = new Date(String(iso));
+  if (Number.isNaN(d.getTime())) return "-";
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  return `${dd}/${mm}`;
+}
+
+
+// ✅ NOVO: HH:mm a partir do ISO (created_at do backend)
+function hourFromISO(iso?: string) {
+  if (!iso) return "-";
+  const d = new Date(String(iso));
+  if (Number.isNaN(d.getTime())) return "-";
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
 function paymentLabel(v: any) {
@@ -120,22 +139,19 @@ const headerStyle = (hover: boolean, width: number): React.CSSProperties => {
 };
 
 type Props = {
-  orders?: UltimoPedidoUI[];
   emptyText?: string;
-  maxRows?: number;
-
-  filterOperationalDay?: boolean; // default true
-  operationalISO?: string; // ✅ vem do PAI (YYYY-MM-DD). Sem window/localStorage aqui.
+  filterOperationalDay?: boolean;
+  operationalISO?: string; // YYYY-MM-DD
 };
 
 export default function UltimosPedidos({
-  orders,
   emptyText = "Nada para mostrar.",
-  maxRows = 10,
   filterOperationalDay = true,
   operationalISO,
 }: Props) {
   const [hoverHeader, setHoverHeader] = useState(false);
+  const [orders, setOrders] = useState<UltimoPedidoUI[]>([]);
+  const busyRef = useRef(false);
 
   const minWidth = useMemo(() => COLS.reduce((a, c) => a + c.w, 0), []);
 
@@ -144,38 +160,79 @@ export default function UltimosPedidos({
     return s.length >= 10 ? s.slice(0, 10) : "";
   }
 
-  const sourceOrders = orders || [];
+  async function load() {
+    if (busyRef.current) return;
+    busyRef.current = true;
+
+    try {
+      const r = await fetch("/api/orders", { cache: "no-store" });
+      const j = await r.json().catch(() => null);
+
+      const rows = (r.ok && j?.ok ? (j.rows ?? []) : []) as UltimoPedidoUI[];
+      setOrders(rows.slice(0, 10));
+    } catch {
+      setOrders([]);
+    } finally {
+      busyRef.current = false;
+    }
+  }
+
+  useEffect(() => {
+    load(); // primeira
+
+    const t = setInterval(() => {
+      load();
+    }, 2000);
+
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const filteredSourceOrders = useMemo(() => {
-    const sliced = sourceOrders.slice(0, maxRows);
+    const sliced = (orders || []).slice(0, 10);
 
     if (!filterOperationalDay) return sliced;
-
-    // ✅ se o pai não mandou operationalISO, não inventa (front burro)
     if (!operationalISO) return sliced;
 
-    return sourceOrders.filter((o) => datePrefix10(o?.order_date) === operationalISO).slice(0, maxRows);
-  }, [sourceOrders, operationalISO, filterOperationalDay, maxRows]);
+    return sliced.filter((o) => {
+      const iso = o.order_date || o.created_at || "";
+      return datePrefix10(iso) === operationalISO;
+    });
+  }, [orders, operationalISO, filterOperationalDay]);
 
   const rows: Row[] = useMemo(() => {
-    const normalized: Row[] = (filteredSourceOrders || []).map((o, i) => {
+    return (filteredSourceOrders || []).map((o, i) => {
       const out: Row = { __ROWNUMBER: i + 2, __ID: o?.id ?? "" };
 
-      out[normKey("DATA")] = dayFromISO(o.order_date) || "-";
-      out[normKey("MÊS")] = monthLabelFromISO(o.order_date) || "-";
+      const baseISO = o.order_date || o.created_at || "";
 
-      out[normKey("CLIENTE")] = o.customer_name ?? "-";
-      out[normKey("PLATAFORMA")] = (o.platform ?? "-").toString().toUpperCase();
-      out[normKey("ATENDIMENTO")] = (o.service_type ?? "-").toString().toUpperCase();
+      out[normKey("DATA")] = dateBRFromISO(baseISO) || "-";
 
-      out[normKey("R$ INICIAL")] = (o as any)?.r_inicial ?? (o as any)?.total ?? 0;
-      out[normKey("TROCO")] = o.troco ?? 0;
-      out[normKey("R$ FINAL")] = (o as any)?.r_final ?? (o as any)?.total ?? 0;
+      out[normKey("HORA")] = hourFromISO(baseISO) || "-"; // ✅ antes era MÊS
 
-      out[normKey("FORMA DE PAGAMENTO")] = paymentLabel(o.payment_method);
+      const cliente = o.customer_name ?? o.cliente_nome ?? "-";
+      const plataforma = (o.platform ?? o.plataforma ?? "-").toString().toUpperCase();
+      const atendimento = (o.service_type ?? o.atendimento ?? "-").toString().toUpperCase();
 
-      out[normKey("BAIRROS")] = o.bairros ?? "-";
-      out[normKey("TAXA DE ENTREGA")] = o.taxa_entrega ?? 0;
+      const rInicial = (o as any)?.r_inicial ?? (o as any)?.valor_pago ?? 0;
+      const rFinal = (o as any)?.r_final ?? (o as any)?.valor_final ?? 0;
+
+      const pay = o.payment_method ?? (o as any)?.pagamento ?? "-";
+      const bairro = o.bairros ?? (o as any)?.bairro ?? "-";
+      const taxa = (o as any)?.taxa_entrega ?? 0;
+
+      out[normKey("CLIENTE")] = cliente;
+      out[normKey("PLATAFORMA")] = plataforma;
+      out[normKey("ATENDIMENTO")] = atendimento;
+
+      out[normKey("R$ INICIAL")] = rInicial;
+      out[normKey("TROCO")] = (o as any)?.troco ?? 0;
+      out[normKey("R$ FINAL")] = rFinal;
+
+      out[normKey("FORMA DE PAGAMENTO")] = paymentLabel(pay);
+
+      out[normKey("BAIRROS")] = (bairro ?? "-").toString().trim() || "-";
+      out[normKey("TAXA DE ENTREGA")] = taxa;
 
       out[normKey("RESPONSÁVEL")] = o.responsavel ?? "Operador de Caixa";
       out[normKey("STATUS")] = o.status ?? "EM PRODUÇÃO";
@@ -187,11 +244,7 @@ export default function UltimosPedidos({
 
       return out;
     });
-
-    return normalized;
   }, [filteredSourceOrders]);
-
-  const emptyLabel = emptyText;
 
   return (
     <div
@@ -211,7 +264,6 @@ export default function UltimosPedidos({
     >
       <div style={{ maxHeight: 500, overflowY: "auto", overflowX: "auto" }}>
         <div style={{ width: minWidth }}>
-          {/* HEADER */}
           <div
             onMouseEnter={() => setHoverHeader(true)}
             onMouseLeave={() => setHoverHeader(false)}
@@ -264,7 +316,6 @@ export default function UltimosPedidos({
             </div>
           </div>
 
-          {/* ROWS */}
           {rows.map((r, idx) => (
             <div
               key={String(r.__ID || r.__ROWNUMBER || idx)}
@@ -305,7 +356,7 @@ export default function UltimosPedidos({
           ))}
 
           {!rows.length && (
-            <div style={{ padding: 14, fontWeight: 900, color: "#eaf0ff", opacity: 0.75 }}>{emptyLabel}</div>
+            <div style={{ padding: 14, fontWeight: 900, color: "#eaf0ff", opacity: 0.75 }}>{emptyText}</div>
           )}
         </div>
       </div>

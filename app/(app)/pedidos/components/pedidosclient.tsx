@@ -1,10 +1,15 @@
+// =========================================
+// app/pedidos/pedidosclient.tsx
+// ✅ DATA | HORA (hora vem do created_at do backend)
+// ✅ não mexe no resto
+// =========================================
+
 /* =========================================
    app/pedidos/pedidosclient.tsx
-   ✅ FRONT BURRO (SEM TENANT / SEM API / SEM LS / SEM WINDOW)
-   ✅ recebe pedidos do PAI via props
-   ✅ delete pede pro PAI (callback)
-   ✅ não mexe em layout
-   ✅ regra 40px: ZERO padding externo aqui (shell controla)
+   ✅ FRONT BURRO (SEM TENANT / SEM LS / SEM WINDOW)
+   ✅ Agora: permite editar RESPONSÁVEL e STATUS
+   ✅ Ao editar na tabela: PATCH /api/orders -> Supabase
+   ✅ Atualiza a linha na hora (optimista) e mantém na tela
 ========================================= */
 "use client";
 
@@ -19,7 +24,7 @@ import PedidosConfirmDeleteModal from "./pedidosconfirmdeletemodal";
 
 export type OrdersSourceItem = {
   id: string;
-  created_at: string; // ISO
+  created_at: string; // ISO (backend)
 
   status?: string | null;
   responsavel?: string | null;
@@ -37,22 +42,23 @@ export type OrdersSourceItem = {
   troco?: number | null;
 };
 
-const MONTHS_PT = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
-
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
 
-function monthLabelFromISO(iso: string) {
-  const d = new Date(iso);
-  const m = MONTHS_PT[d.getMonth()] ?? "";
-  const y = d.getFullYear();
-  return `${m}/${y}`;
-}
-
 function dayFromISO(iso: string) {
   const d = new Date(iso);
-  return pad2(d.getDate());
+  if (Number.isNaN(d.getTime())) return "-";
+  const dd = pad2(d.getDate());
+  const mm = pad2(d.getMonth() + 1);
+  return `${dd}/${mm}`; // ✅ dd/mm
+}
+
+
+// ✅ NOVO: HH:mm a partir do created_at (local do navegador)
+function hourFromISO(iso: string) {
+  const d = new Date(iso);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
 function nicePayLabel(p: string) {
@@ -76,7 +82,7 @@ function mapOrderToRow(o: OrdersSourceItem): Row {
   const createdAt = String(o?.created_at ?? new Date().toISOString());
 
   const data = dayFromISO(createdAt);
-  const mes = monthLabelFromISO(createdAt);
+  const hora = hourFromISO(createdAt); // ✅ NOVO
 
   const cliente = String(o?.cliente_nome ?? "");
   const plataforma = String(o?.plataforma ?? "").toUpperCase();
@@ -99,7 +105,7 @@ function mapOrderToRow(o: OrdersSourceItem): Row {
     __ROWNUMBER: 0,
 
     [normKey("DATA")]: data,
-    [normKey("MÊS")]: mes,
+    [normKey("HORA")]: hora, // ✅ antes era MÊS
     [normKey("CLIENTE")]: cliente,
     [normKey("PLATAFORMA")]: plataforma,
     [normKey("ATENDIMENTO")]: atendimento,
@@ -118,27 +124,36 @@ function mapOrderToRow(o: OrdersSourceItem): Row {
 }
 
 type Props = {
-  // ✅ fonte de dados vem do PAI (server/page/hook)
   orders: OrdersSourceItem[];
-
-  // ✅ quando deletar, quem apaga é o PAI (api/server/supabase)
   onRequestDelete?: (id: string) => Promise<void> | void;
-
-  // opcional: se o pai quiser “piscar” highlight quando chegar pedido novo
   highlightIdsFromParent?: string[];
 };
+
+type PatchPayload = { id: string; responsavel?: string | null; status?: string | null };
+
+async function patchOrder(payload: PatchPayload) {
+  const res = await fetch("/api/orders", {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || !json?.ok) throw new Error(json?.error || "PATCH_FAILED");
+  return json?.row as OrdersSourceItem | undefined;
+}
 
 export default function PedidosClient({ orders, onRequestDelete, highlightIdsFromParent }: Props) {
   const [q, setQ] = useState<string>("");
 
-  // ✅ rows derivadas dos orders (front burro)
-  const rows = useMemo(() => (orders || []).map(mapOrderToRow), [orders]);
+  const [rowsState, setRowsState] = useState<Row[]>(() => (orders || []).map(mapOrderToRow));
 
-  // ✅ highlight da TABELA (seleção/click). Mantém como está.
+  React.useEffect(() => {
+    setRowsState((orders || []).map(mapOrderToRow));
+  }, [orders]);
+
   const [highlightIds, setHighlightIds] = useState<string[]>([]);
   const highlightSetRef = useRef<Set<string>>(new Set());
 
-  // ✅ se o pai mandar highlight “novo pedido”, aplica aqui sem misturar com seleção
   React.useEffect(() => {
     if (!highlightIdsFromParent?.length) return;
     setHighlightIds(highlightIdsFromParent);
@@ -157,8 +172,66 @@ export default function PedidosClient({ orders, onRequestDelete, highlightIdsFro
 
   const minWidth = useMemo(() => COLS.reduce((a: number, c: ColDef) => a + c.w, 0), []);
 
+  const lastSentRef = useRef<Map<string, { responsavel: string; status: string }>>(new Map());
+
+  function schedulePatchForDiff(prevRows: Row[], nextRows: Row[]) {
+    const prevById = new Map<string, Row>();
+    for (const r of prevRows) {
+      const id = String(r?.__ID ?? "");
+      if (id) prevById.set(id, r);
+    }
+
+    for (const nr of nextRows) {
+      const id = String(nr?.__ID ?? "");
+      if (!id) continue;
+
+      const pr = prevById.get(id);
+      if (!pr) continue;
+
+      const prResp = String(pr?.[normKey("RESPONSÁVEL")] ?? "");
+      const prStatus = String(pr?.[normKey("STATUS")] ?? "");
+
+      const nrResp = String(nr?.[normKey("RESPONSÁVEL")] ?? "");
+      const nrStatus = String(nr?.[normKey("STATUS")] ?? "");
+
+      const changedResp = prResp !== nrResp;
+      const changedStatus = prStatus !== nrStatus;
+
+      if (!changedResp && !changedStatus) continue;
+
+      const last = lastSentRef.current.get(id);
+      if (last && last.responsavel === nrResp && last.status === nrStatus) continue;
+
+      lastSentRef.current.set(id, { responsavel: nrResp, status: nrStatus });
+
+      (async () => {
+        try {
+          await patchOrder({
+            id,
+            responsavel: nrResp || null,
+            status: nrStatus || null,
+          });
+        } catch (e) {
+          console.error("[PedidosClient] PATCH failed:", e);
+        }
+      })();
+    }
+  }
+
+  const setRowsWithSync: React.Dispatch<React.SetStateAction<Row[]>> = (updater) => {
+    setRowsState((prev) => {
+      const next = typeof updater === "function" ? (updater as any)(prev) : updater;
+      try {
+        schedulePatchForDiff(prev, next);
+      } catch (e) {
+        console.error("[PedidosClient] diff/patch error:", e);
+      }
+      return next;
+    });
+  };
+
   const base = useMemo(() => {
-    let rws = rows;
+    let rws = rowsState;
 
     if (responsavelFilter) rws = rws.filter((r: Row) => matchMotoboy(r?.[normKey("RESPONSÁVEL")], responsavelFilter));
     if (plataformaFilter) rws = rws.filter((r: Row) => matchPlataforma(r?.[normKey("PLATAFORMA")], plataformaFilter));
@@ -166,7 +239,7 @@ export default function PedidosClient({ orders, onRequestDelete, highlightIdsFro
     if (pagamentoFilter) rws = rws.filter((r: Row) => matchLoose(r?.[normKey("FORMA DE PAGAMENTO")], pagamentoFilter));
 
     return rws;
-  }, [rows, responsavelFilter, plataformaFilter, atendimentoFilter, pagamentoFilter]);
+  }, [rowsState, responsavelFilter, plataformaFilter, atendimentoFilter, pagamentoFilter]);
 
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -234,7 +307,7 @@ export default function PedidosClient({ orders, onRequestDelete, highlightIdsFro
 
     try {
       setConfirmBusy(true);
-      await onRequestDelete?.(confirmId); // ✅ pai apaga (backend)
+      await onRequestDelete?.(confirmId);
       setConfirmBusy(false);
       closeConfirm();
     } catch (e) {
@@ -272,14 +345,16 @@ export default function PedidosClient({ orders, onRequestDelete, highlightIdsFro
         setHighlightIds={setHighlightIds}
         confirmBusy={confirmBusy}
         onRequestDelete={openConfirmDelete}
-        setRows={() => {
-          /* front burro: tabela não muda o source */
-        }}
+        setRows={setRowsWithSync}
       />
 
       {!filtered.length && (
         <div style={{ padding: 14, fontWeight: 900 }}>
-          {rows.length ? (hasAnyFilter ? "Nenhum pedido bateu com esse filtro." : "Nada encontrado na busca.") : "Nada para mostrar."}
+          {rowsState.length
+            ? hasAnyFilter
+              ? "Nenhum pedido bateu com esse filtro."
+              : "Nada encontrado na busca."
+            : "Nada para mostrar."}
         </div>
       )}
     </div>

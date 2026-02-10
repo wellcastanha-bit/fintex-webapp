@@ -1,3 +1,8 @@
+// =========================================
+// app/pedidos/pedidos.constant.ts
+// ✅ troca MÊS -> HORA
+// =========================================
+
 export type Row = Record<string, any>;
 
 export type ColDef = {
@@ -9,7 +14,7 @@ export type ColDef = {
 
 export const COLS: readonly ColDef[] = [
   { key: "DATA", label: "DATA", w: 90, type: "text" },
-  { key: "MÊS", label: "MÊS", w: 110, type: "text" },
+  { key: "HORA", label: "HORA", w: 90, type: "text" }, // ✅ antes era MÊS
   { key: "CLIENTE", label: "CLIENTE", w: 260, type: "text" },
   { key: "PLATAFORMA", label: "PLATAFORMA", w: 160, type: "text" },
   { key: "ATENDIMENTO", label: "ATENDIMENTO", w: 160, type: "text" },

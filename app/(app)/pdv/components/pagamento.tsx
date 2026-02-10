@@ -2,8 +2,8 @@
    app/pdv/components/pagamento.tsx
    ✅ UI/Front
    ✅ cancelar -> pede modal no Page via onRequestCancel
-   ✅ SALVAR: monta payload (SEM TENANT)
-   ✅ (sem API / sem Supabase / sem events / sem localStorage)
+   ✅ SALVAR: monta payload (SEM TENANT) e envia pro backend (/api/orders)
+   ✅ (sem Supabase direto aqui)
 ========================================= */
 "use client";
 
@@ -20,17 +20,22 @@ type Props = {
   onRequestCancel: (cancelFn: () => void) => void;
 };
 
-export type PdvOrderPayload = {
-  cliente_nome: string;
-  plataforma: string;
-  atendimento: string;
+// ✅ payload que o backend /api/orders espera
+type ApiOrderPayload = {
+  customer_name: string;
+  platform: string;
+  service_type: string;
 
-  bairro: string;
-  taxa_entrega: number;
+  bairros?: string | null;
+  taxa_entrega?: number;
 
-  pagamento: PagamentoKey;
-  valor_pago: number; // R$ Inicial (dinheiro recebido)
-  valor_final: number; // R$ Final (total do pedido)
+  payment_method: PagamentoKey;
+
+  // regra do teu sistema:
+  // r_final = r_inicial - troco  (calculado no banco)
+  r_inicial: number; // dinheiro recebido (ou valor do pedido se não for dinheiro)
+  troco: number; // troco calculado (dinheiro_recebido - valor_pedido)
+  responsavel?: string | null;
 };
 
 export default function Pagamento({ showToast, onRequestCancel }: Props) {
@@ -126,11 +131,11 @@ export default function Pagamento({ showToast, onRequestCancel }: Props) {
   }, []);
 
   const salvar = async () => {
-    const valor_final = brlToNumber(valorPedido);
-    const dinheiro_recebido = brlToNumber(trocoPara);
+    const valor_pedido = brlToNumber(valorPedido); // total digitado
+    const dinheiro_recebido = brlToNumber(trocoPara); // "troco para" (se dinheiro)
 
     if (!forma) return showToast("Selecione a forma de pagamento.");
-    if (valor_final <= 0) return showToast("Informe o valor do pedido.");
+    if (valor_pedido <= 0) return showToast("Informe o valor do pedido.");
 
     const d = pdvGet();
 
@@ -139,41 +144,64 @@ export default function Pagamento({ showToast, onRequestCancel }: Props) {
     if (!d.service_type || !String(d.service_type).trim()) return showToast("Falta: Atendimento");
 
     pdvSet("payment_method", forma);
-    pdvSet("total", valor_final);
+    pdvSet("total", valor_pedido);
 
     const bairro_raw = String((d as any)?.bairros ?? "").trim();
-    const bairro = bairro_raw && bairro_raw !== "Selecione:" ? bairro_raw : "";
+    const bairros = bairro_raw && bairro_raw !== "Selecione:" ? bairro_raw : "";
 
     const taxa_entrega_num = Number((d as any)?.taxa_entrega ?? 0);
     const taxa_entrega = Number.isFinite(taxa_entrega_num) ? taxa_entrega_num : 0;
 
-    // ✅ regra: "R$ Inicial" = dinheiro recebido (se DINHEIRO e digitou trocoPara > 0), senão = valor_final
+    // ✅ regra:
+    // - se DINHEIRO e digitou "Troco para" > 0: r_inicial = dinheiro_recebido
+    // - caso contrário: r_inicial = valor_pedido
     const isDinheiro = forma === "DINHEIRO" && dinheiro_recebido > 0;
-    const valor_pago = isDinheiro ? dinheiro_recebido : valor_final;
+    const r_inicial = isDinheiro ? dinheiro_recebido : valor_pedido;
 
-    const payload: PdvOrderPayload = {
-      cliente_nome: String(d.customer_name).trim(),
-      plataforma: String(d.platform).trim(),
-      atendimento: String(d.service_type).trim(),
+    // ✅ troco = dinheiro_recebido - valor_pedido (nunca negativo)
+    const troco = isDinheiro ? Math.max(0, dinheiro_recebido - valor_pedido) : 0;
 
-      bairro,
+    const payload: ApiOrderPayload = {
+      customer_name: String(d.customer_name).trim(),
+      platform: String(d.platform).trim(),
+      service_type: String(d.service_type).trim(),
+
+      bairros: bairros || null,
       taxa_entrega: taxa_entrega > 0 ? taxa_entrega : 0,
 
-      pagamento: forma,
-      valor_pago,
-      valor_final,
+      payment_method: forma,
+
+      r_inicial,
+      troco,
+
+      responsavel: (d as any)?.responsavel ? String((d as any).responsavel).trim() : null,
     };
 
-    // front-only: só confirma
-    void payload;
+    try {
+      const r = await fetch("/api/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-    showToast("Pedido salvo (local) ✅", "success");
+      const j = await r.json().catch(() => null);
 
-    pdvClear();
-    setForma("");
-    setValorPedido("0,00");
-    setEditandoValor(false);
-    setTrocoPara("0,00");
+      if (!r.ok || !j?.ok) {
+        console.error("[PDV] POST /api/orders failed:", j?.error || r.statusText, j);
+        return showToast("Erro ao salvar no backend.", "error");
+      }
+
+      showToast("Pedido salvo ✅", "success");
+
+      pdvClear();
+      setForma("");
+      setValorPedido("0,00");
+      setEditandoValor(false);
+      setTrocoPara("0,00");
+    } catch (e) {
+      console.error("[PDV] network error:", e);
+      return showToast("Sem conexão com o backend.", "error");
+    }
   };
 
   const cancelarReal = () => {

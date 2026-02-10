@@ -21,7 +21,7 @@ export type PedidoCashRow = {
   plataforma: string;
   atendimento: string;
   pagamentoLabel: "Dinheiro" | "PIX" | "Pagamento Online" | "Cartão de Débito" | "Cartão de Crédito";
-  valor: number;
+  valor: number; // ✅ aqui vai ser SEMPRE a soma do r_final
 };
 
 export type ManualCashEntry = {
@@ -189,7 +189,7 @@ function StatCard({
    ✅ PERSISTÊNCIA LOCAL (front-only)
 ========================= */
 type CaixaDraft = {
-  pedidosAll: PedidoCashRow[];
+  // ✅ pedidos NÃO ficam mais no draft: vem do backend (r_final)
   manualCash: ManualCashEntry[];
   expenses: Expense[];
   withdrawals: Withdrawal[];
@@ -221,6 +221,47 @@ function normalizeCounts(list: any, fallback: CountItem[]) {
   return DENOMS.map((d) => ({ denomination: d, quantity: m.get(d) ?? 0 }));
 }
 
+/* =========================
+   ✅ BACKEND: normaliza pagamento
+========================= */
+function normPaymentLabel(v: any): PedidoCashRow["pagamentoLabel"] {
+  const s = String(v ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  if (!s) return "Dinheiro";
+
+  // dinheiro
+  if (s.includes("dinheiro") || s === "cash") return "Dinheiro";
+
+  // pix
+  if (s === "pix" || s.includes("pix")) return "PIX";
+
+  // online
+  if (s.includes("online") || s.includes("pagamento online") || s.includes("gateway")) return "Pagamento Online";
+
+  // debito
+  if (s.includes("debito") || s.includes("debit")) return "Cartão de Débito";
+
+  // credito
+  if (s.includes("credito") || s.includes("credit")) return "Cartão de Crédito";
+
+  // fallback
+  return "Dinheiro";
+}
+
+function parseDateAndTimeFromISO(iso: any) {
+  const dt = new Date(String(iso ?? ""));
+  if (!Number.isFinite(dt.getTime())) {
+    return { date: getDiaOperacionalISO(), time: "00:00" };
+  }
+  const date = `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
+  const time = `${pad2(dt.getHours())}:${pad2(dt.getMinutes())}`;
+  return { date, time };
+}
+
 export default function CaixaDiario() {
   // ✅ 170px como tu pediu (pra caber 7 cards na linha)
   const STAT_W = 170;
@@ -230,9 +271,9 @@ export default function CaixaDiario() {
   // ✅ dia operacional (ISO)
   const [dateISO] = useState<string>(() => getDiaOperacionalISO());
 
-  // ✅ Pedidos (front-only) — sem API/back
+  // ✅ Pedidos (BACKEND) — soma por pagamento usando r_final
   const [pedidosAll, setPedidosAll] = useState<PedidoCashRow[]>([]);
-  const [pedidosStatus, setPedidosStatus] = useState<"idle" | "ok">("idle");
+  const [pedidosStatus, setPedidosStatus] = useState<"idle" | "ok" | "err">("idle");
 
   // Entradas manuais (LOCAL) ✅
   const [manualCash, setManualCash] = useState<ManualCashEntry[]>([]);
@@ -260,6 +301,7 @@ export default function CaixaDiario() {
 
   /* =========================================
      ✅ 0) CARREGA RASCUNHO DO DIA (localStorage)
+        (SEM pedidos: pedidos vêm do backend)
   ========================================= */
   useEffect(() => {
     try {
@@ -268,9 +310,6 @@ export default function CaixaDiario() {
       const saved = safeParse<CaixaDraft>(raw);
 
       if (saved) {
-        setPedidosAll(Array.isArray(saved.pedidosAll) ? saved.pedidosAll : []);
-        setPedidosStatus("ok");
-
         setManualCash(Array.isArray(saved.manualCash) ? saved.manualCash : []);
         setExpenses(Array.isArray(saved.expenses) ? saved.expenses : []);
         setWithdrawals(Array.isArray(saved.withdrawals) ? saved.withdrawals : []);
@@ -287,24 +326,90 @@ export default function CaixaDiario() {
 
   /* =========================================
      ✅ 0.1) SALVA RASCUNHO DO DIA (localStorage)
+        (SEM pedidos: pedidos vêm do backend)
   ========================================= */
   useEffect(() => {
     if (!draftReady) return;
 
     try {
       const key = storageKey(dateISO);
-      const draft: CaixaDraft = { pedidosAll, manualCash, expenses, withdrawals, initialCounts, finalCounts };
+      const draft: CaixaDraft = { manualCash, expenses, withdrawals, initialCounts, finalCounts };
       localStorage.setItem(key, JSON.stringify(draft));
     } catch {
       // sem stress
     }
-  }, [draftReady, dateISO, pedidosAll, manualCash, expenses, withdrawals, initialCounts, finalCounts]);
+  }, [draftReady, dateISO, manualCash, expenses, withdrawals, initialCounts, finalCounts]);
 
-  // ✅ totais por forma (PEDIDOS)
+  /* =========================================
+     ✅ 1) CARREGA PEDIDOS DO BACKEND (r_final)
+     - aqui é onde “puxa do backend”
+     - soma por pagamento é baseada em r_final
+     - NÃO exige login (só fetch)
+  ========================================= */
+  useEffect(() => {
+    let alive = true;
+
+    async function loadOrders() {
+      setPedidosStatus("idle");
+      try {
+        // ✅ ajuste a rota caso a tua API tenha outro path:
+        // Ex.: /api/pedidos, /api/orders/list, etc.
+      const res = await fetch(`/api/orders?date=${encodeURIComponent(dateISO)}&mode=caixa`, {
+  method: "GET",
+  cache: "no-store",
+});
+
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const data = await res.json();
+
+        // ✅ aceita array direto ou {items: []}
+        const arr: any[] = Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : [];
+
+        const mapped: PedidoCashRow[] = arr.map((row: any) => {
+          const id = String(row?.id ?? row?.uuid ?? row?.order_id ?? `${Date.now()}_${Math.random().toString(16).slice(2)}`);
+
+          const created = row?.created_at ?? row?.order_date ?? row?.date ?? row?.createdAt;
+          const { date, time } = parseDateAndTimeFromISO(created);
+
+          // ✅ r_final é o que manda
+          const valor = toNumberSmart(row?.r_final ?? row?.valor ?? row?.amount ?? 0);
+
+          return {
+            id,
+            date,
+            time,
+            cliente: String(row?.customer_name ?? row?.cliente ?? row?.customer ?? "").trim(),
+            plataforma: String(row?.platform ?? row?.plataforma ?? "").trim(),
+            atendimento: String(row?.service_type ?? row?.atendimento ?? "").trim(),
+            pagamentoLabel: normPaymentLabel(row?.payment_method ?? row?.pagamento ?? row?.pagamento_label),
+            valor,
+          };
+        });
+
+        if (!alive) return;
+        setPedidosAll(mapped);
+        setPedidosStatus("ok");
+      } catch {
+        if (!alive) return;
+        setPedidosAll([]);
+        setPedidosStatus("err");
+      }
+    }
+
+    loadOrders();
+    return () => {
+      alive = false;
+    };
+  }, [dateISO]);
+
+  // ✅ totais por forma (PEDIDOS) — agora é BACKEND via r_final
   const totalsByPay = useMemo(() => {
     const base = { dinheiro: 0, pix: 0, online: 0, debito: 0, credito: 0, total: 0 };
     for (const p of pedidosAll) {
       base.total += p.valor;
+
       if (p.pagamentoLabel === "Dinheiro") base.dinheiro += p.valor;
       else if (p.pagamentoLabel === "PIX") base.pix += p.valor;
       else if (p.pagamentoLabel === "Pagamento Online") base.online += p.valor;
@@ -364,6 +469,7 @@ export default function CaixaDiario() {
 
   const removeManual = (id: string) => setManualCash((prev) => prev.filter((m) => m.id !== id));
 
+  // ✅ pedidos são do backend: remover só “da tela”
   const removePedido = (id: string) => setPedidosAll((prev) => prev.filter((p) => p.id !== id));
 
   /* =========================
@@ -464,8 +570,9 @@ export default function CaixaDiario() {
         <div className="mb-8">
           <div className="text-[34px] font-extrabold leading-none">Caixa Diário</div>
 
-          {pedidosStatus === "idle" && (
-            <div className="mt-3 text-[13px] text-slate-200/70">Pedidos: (front-only)</div>
+          {pedidosStatus === "idle" && <div className="mt-3 text-[13px] text-slate-200/70">Carregando pedidos…</div>}
+          {pedidosStatus === "err" && (
+            <div className="mt-3 text-[13px] text-red-300/80">Falha ao puxar pedidos do backend.</div>
           )}
         </div>
 
@@ -516,7 +623,7 @@ export default function CaixaDiario() {
           {tab === "entradas" && (
             <EntradasTab
               totalsByPay={totalsByPay}
-              pedidosStatus={pedidosStatus}
+              pedidosStatus={pedidosStatus === "ok" ? "ok" : "idle"}
               pedidosDinheiro={pedidosDinheiro}
               manualCash={manualCash}
               manualDesc={manualDesc}
