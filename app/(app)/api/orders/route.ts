@@ -7,30 +7,81 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
+// ✅ CONFIG DIA OPERACIONAL
+const OP_CUTOFF_HOUR = 6;       // 06:00
+const TZ_OFFSET_MIN = -180;     // Brasil (-03:00)
+
 function num(v: any) {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 }
 
-function startEndFromISODate(dateISO: string) {
-  // dateISO: YYYY-MM-DD
-  // intervalo [00:00, 00:00 do dia seguinte)
-  const start = `${dateISO}T00:00:00.000`;
-  const end = `${dateISO}T23:59:59.999`;
-  return { start, end };
+function pad2(n: number) {
+  return String(n).padStart(2, "0");
+}
+
+function toISODateLocalFromMs(ms: number) {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+/**
+ * Converte "data local" + hora local em UTC ISO (com Z) usando offset fixo.
+ * local = UTC + offset  => UTC = local - offset
+ */
+function localDateTimeToUTCISO(dateISO: string, hour: number, minute = 0, second = 0, ms = 0) {
+  const [yy, mm, dd] = dateISO.split("-").map((x) => Number(x));
+  const localMs = Date.UTC(yy, (mm || 1) - 1, dd || 1, hour, minute, second, ms);
+  const utcMs = localMs - (TZ_OFFSET_MIN * 60 * 1000);
+  return new Date(utcMs).toISOString();
+}
+
+/**
+ * Range UTC [start, end) do dia operacional ancorado em dateISO (local).
+ * start = dateISO 06:00 local
+ * end   = (dateISO+1) 06:00 local
+ */
+function operationalRangeUTCFromAnchor(dateISO: string) {
+  const startISO = localDateTimeToUTCISO(dateISO, OP_CUTOFF_HOUR, 0, 0, 0);
+  const startMs = new Date(startISO).getTime();
+  const endISO = new Date(startMs + 24 * 60 * 60 * 1000).toISOString();
+  return { startISO, endISO };
+}
+
+/**
+ * Calcula o "anchor dateISO" do dia operacional de agora (no fuso -03) com cutoff 06:00.
+ */
+function currentOperationalAnchorISO() {
+  const nowUtc = Date.now();
+  const nowLocalMs = nowUtc + (TZ_OFFSET_MIN * 60 * 1000);
+  const nowLocal = new Date(nowLocalMs);
+
+  let anchorISO = `${nowLocal.getFullYear()}-${pad2(nowLocal.getMonth() + 1)}-${pad2(nowLocal.getDate())}`;
+
+  // se ainda é antes do cutoff, âncora é ontem
+  if (nowLocal.getHours() < OP_CUTOFF_HOUR) {
+    const yesterdayLocalMs = nowLocalMs - 24 * 60 * 60 * 1000;
+    anchorISO = toISODateLocalFromMs(yesterdayLocalMs);
+  }
+
+  return anchorISO;
 }
 
 /* =========================
    GET
    - padrão: { ok, rows } (PedidosClient)
    - mode=caixa: { ok, items } (Caixa Diário)
-   - ?date=YYYY-MM-DD filtra por created_at
+   - ?date=YYYY-MM-DD => ancora do dia operacional
+   - sem date => dia operacional de agora
 ========================= */
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
 
-  const dateISO = searchParams.get("date"); // YYYY-MM-DD
   const mode = searchParams.get("mode"); // "caixa" | null
+  const dateISO = searchParams.get("date"); // YYYY-MM-DD (âncora local do dia operacional)
+
+  const anchorISO = dateISO || currentOperationalAnchorISO();
+  const { startISO, endISO } = operationalRangeUTCFromAnchor(anchorISO);
 
   let q = supabase
     .from("orders")
@@ -39,11 +90,8 @@ export async function GET(req: Request) {
     )
     .order("created_at", { ascending: false });
 
-  // ✅ filtro por dia (created_at)
-  if (dateISO) {
-    const { start, end } = startEndFromISODate(dateISO);
-    q = q.gte("created_at", start).lte("created_at", end);
-  }
+  // ✅ filtro DIA OPERACIONAL (created_at) em UTC
+  q = q.gte("created_at", startISO).lt("created_at", endISO);
 
   const { data, error } = await q;
 
@@ -51,7 +99,6 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }
 
-  // ✅ Caixa Diário quer payload leve e fácil de somar r_final
   if (mode === "caixa") {
     const items = (data ?? []).map((o: any) => ({
       id: String(o.id),
@@ -63,10 +110,9 @@ export async function GET(req: Request) {
       service_type: o.service_type ?? null,
     }));
 
-    return NextResponse.json({ ok: true, items });
+    return NextResponse.json({ ok: true, items, op: { anchorISO, startISO, endISO } });
   }
 
-  // ✅ formato antigo (PedidosClient) — mantém compatibilidade
   const rows = (data ?? []).map((o: any) => ({
     id: String(o.id),
     created_at: String(o.created_at),
@@ -87,7 +133,7 @@ export async function GET(req: Request) {
     troco: o.troco ?? 0,
   }));
 
-  return NextResponse.json({ ok: true, rows });
+  return NextResponse.json({ ok: true, rows, op: { anchorISO, startISO, endISO } });
 }
 
 /* =========================
