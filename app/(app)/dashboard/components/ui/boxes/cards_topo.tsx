@@ -81,7 +81,6 @@ function MetricCard({
         filter: hover ? "brightness(1.06)" : "brightness(1)",
       }}
     >
-      {/* ✅ título e “valor” no topo usando a mesma cor (m.tag) */}
       <div
         style={{
           display: "flex",
@@ -102,7 +101,6 @@ function MetricCard({
           {title}
         </div>
 
-        {/* canto direito (opcional): mantém vazio para não quebrar layout */}
         <div style={{ color: m.tag, fontWeight: 950, fontSize: 15, letterSpacing: 0.2 }} />
       </div>
 
@@ -132,7 +130,25 @@ function MetricCard({
   );
 }
 
+// =========================
+// ✅ Agora aceita "data" do backend (kpis)
+// - mantém compatível: se você ainda quiser passar props soltas, funciona
+// =========================
+export type DashboardKpis = {
+  pedidos: number;
+  faturamento: number;
+  ticket_medio: number;
+  margem: number; // 0.2 -> 20%
+  lucro_estimado: number;
+  despesas: number;
+  despesas_pct: number; // 0.085 -> 8,5%
+};
+
 export default function CardsTopo({
+  // novo (preferido)
+  kpis,
+
+  // fallback (se o pai ainda não foi migrado)
   pedidos,
   ticketMedio,
   faturamento,
@@ -140,24 +156,49 @@ export default function CardsTopo({
   margemPct,
   despesas,
   despesasPct,
+
   fmtBRL,
 }: {
-  pedidos: number;
-  ticketMedio: number;
-  faturamento: number;
-  lucroEstimado: number;
-  margemPct: number;
-  despesas: number;
-  despesasPct: number;
+  kpis?: DashboardKpis;
+
+  pedidos?: number;
+  ticketMedio?: number;
+  faturamento?: number;
+  lucroEstimado?: number;
+  margemPct?: number;
+  despesas?: number;
+  despesasPct?: number;
+
   fmtBRL: (v: number) => string;
 }) {
+  const p = kpis?.pedidos ?? pedidos ?? 0;
+  const fat = kpis?.faturamento ?? faturamento ?? 0;
+  const tm = kpis?.ticket_medio ?? ticketMedio ?? 0;
+  const luc = kpis?.lucro_estimado ?? lucroEstimado ?? 0;
+
+  // backend vem em fração (0.2). aqui mostramos em %
+  const margem = kpis ? (kpis.margem * 100) : (margemPct ?? 0);
+
+  const desp = kpis?.despesas ?? despesas ?? 0;
+  const despPctNum = kpis ? (kpis.despesas_pct * 100) : (despesasPct ?? 0);
+
   return (
     <div style={{ padding: 18, paddingTop: 0 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
-        <MetricCard title="PEDIDOS" value={String(pedidos)} sub={`Ticket médio: ${fmtBRL(ticketMedio)}`} accent="gray" />
-        <MetricCard title="FATURAMENTO" value={fmtBRL(faturamento)} sub="Receita total do dia" accent="aqua" />
-        <MetricCard title="LUCRO ESTIMADO" value={fmtBRL(lucroEstimado)} sub={`Margem: ${margemPct.toFixed(1).replace(".", ",")}%`} accent="green" />
-        <MetricCard title="DESPESAS" value={fmtBRL(despesas)} sub={`${despesasPct.toFixed(1).replace(".", ",")}% do faturamento`} accent="red" />
+        <MetricCard title="PEDIDOS" value={String(p)} sub={`Ticket médio: ${fmtBRL(tm)}`} accent="gray" />
+        <MetricCard title="FATURAMENTO" value={fmtBRL(fat)} sub="Receita total do dia" accent="aqua" />
+        <MetricCard
+          title="LUCRO ESTIMADO"
+          value={fmtBRL(luc)}
+          sub={`Margem: ${margem.toFixed(1).replace(".", ",")}%`}
+          accent="green"
+        />
+        <MetricCard
+          title="DESPESAS"
+          value={fmtBRL(desp)}
+          sub={`${despPctNum.toFixed(1).replace(".", ",")}% do faturamento`}
+          accent="red"
+        />
       </div>
     </div>
   );

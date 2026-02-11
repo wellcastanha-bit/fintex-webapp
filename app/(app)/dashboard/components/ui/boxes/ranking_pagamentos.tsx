@@ -2,29 +2,30 @@
 "use client";
 
 import React, { useState } from "react";
-import { CardShell, SectionTitle, fmtBRL, pct } from "../card_shell";
+import { CardShell, fmtBRL, pct } from "../card_shell";
 
 export type RankingPagamentoRow = {
   key: string;
   pedidos: number;
   valor: number;
-  pct: number;
+  pct: number; // % sobre o faturamento (0-100)
 };
 
 function BarRow({
   label,
-  subtitle,
+  pedidos,
   pctValue,
-  rank,
+  valorTotal,
 }: {
   label: string;
-  subtitle: string;
+  pedidos: number;
   pctValue: number;
-  rank: number;
+  valorTotal: number;
 }) {
   const [hover, setHover] = useState(false);
 
   const w = Math.max(0, Math.min(100, pctValue));
+  const pedidoLabel = `${pedidos} Pedido${pedidos === 1 ? "" : "s"}`;
 
   return (
     <div
@@ -46,22 +47,34 @@ function BarRow({
         filter: hover ? "brightness(1.04)" : "brightness(1)",
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ color: "#4dd5f8", fontWeight: 950, fontSize: 15 }}>
             {label}
           </div>
+
+          {/* ✅ agora: "1 Pedido(s) · 50,0%" (sem o valor aqui) */}
           <div style={{ marginTop: 6, color: "rgba(255,255,255,0.95)", fontWeight: 850, fontSize: 15 }}>
-            {subtitle}
+            {pedidoLabel} <span style={{ opacity: 0.9 }}>·</span> {pct(pctValue)}
           </div>
         </div>
 
-        <div style={{ color: "#4dd5f8", fontWeight: 950, fontSize: 15, whiteSpace: "nowrap" }}>
-          {`#${rank}`}
+        {/* ✅ no lugar do #1: valor total (fonte um pouco maior) */}
+        <div
+          style={{
+            color: "#4dd5f8",
+            fontWeight: 950,
+            fontSize: 17,
+            lineHeight: "18px",
+            whiteSpace: "nowrap",
+            marginTop: 1,
+          }}
+        >
+          {fmtBRL(valorTotal)}
         </div>
       </div>
 
-      {/* ✅ BARRINHA COPIADA DO DASHBOARD PRINCIPAL (RankRow) */}
+      {/* ✅ BARRINHA */}
       <div
         style={{
           marginTop: 8,
@@ -107,50 +120,49 @@ export default function RankingPagamentos({ rows }: { rows: RankingPagamentoRow[
         overflow: "hidden",
       }}
     >
-<CardShell style={{ border: "1px solid rgba(0,0,0,0)", boxShadow: "none" }}>
-  {/* HEADER ORGANIZADO */}
-  <div
-    style={{
-      padding: "16px 16px 10px 16px",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "space-between",
-      gap: 12,
-    }}
-  >
-    <div
-      style={{
-        fontSize: 18,              // 🔥 altera aqui
-        fontWeight: 950,           // 🔥 altera aqui
-        letterSpacing: 0.2,
-        color: "rgb(255, 255, 255)",
-      }}
-    >
-      Ranking de Pagamentos
-    </div>
-  </div>
+      <CardShell style={{ border: "1px solid rgba(0,0,0,0)", boxShadow: "none" }}>
+        {/* HEADER */}
+        <div
+          style={{
+            padding: "16px 16px 10px 16px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 18,
+              fontWeight: 950,
+              letterSpacing: 0.2,
+              color: "rgba(255,255,255,0.95)",
+            }}
+          >
+            Ranking de Pagamentos
+          </div>
+        </div>
 
-  {/* CONTEÚDO */}
-  <div
-    style={{
-      padding: "0 16px 16px 16px",
-      display: "flex",
-      flexDirection: "column",
-      gap: 10,
-    }}
-  >
-    {rows.map((r, idx) => (
-      <BarRow
-        key={r.key}
-        label={r.key}
-        subtitle={`${r.pedidos} pedidos · ${fmtBRL(r.valor)} · ${pct(r.pct)}`}
-        pctValue={r.pct}
-        rank={idx + 1}
-      />
-    ))}
-  </div>
-</CardShell>
-
+        {/* CONTEÚDO */}
+        <div
+          style={{
+            padding: "0 16px 16px 16px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+          }}
+        >
+          {rows.map((r) => (
+            <BarRow
+              key={r.key}
+              label={r.key}
+              pedidos={r.pedidos}
+              pctValue={r.pct}
+              valorTotal={r.valor}
+            />
+          ))}
+        </div>
+      </CardShell>
     </div>
   );
 }

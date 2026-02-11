@@ -7,6 +7,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
    HeaderDashboard (FINtEX)
    ✅ Centro REAL: seletor de datas fica NO MEIO entre ESQ e DIR
    ✅ Não empurra pro lado direito
+   ✅ Agora: emite onDateChange com payload pronto pro /api/dashboard
 ========================================================= */
 
 type PresetKey =
@@ -21,9 +22,15 @@ type PresetKey =
 
 type DateSelection = {
   preset: PresetKey;
-  startISO: string; // YYYY-MM-DD
-  endISO: string; // YYYY-MM-DD
+  startISO: string; // YYYY-MM-DD (inclusive)
+  endISO: string; // YYYY-MM-DD (inclusive)
 };
+
+// ✅ payload pronto pro backend
+export type DashboardQuery =
+  | { kind: "period"; period: "hoje" | "ontem" | "ultimos_7" | "ultimos_30" | "mes_anterior" | "esse_mes" }
+  | { kind: "date"; date: string } // YYYY-MM-DD
+  | { kind: "range"; start: string; end: string }; // YYYY-MM-DD (inclusive)
 
 function pad2(n: number) {
   return String(n).padStart(2, "0");
@@ -112,6 +119,24 @@ function computePreset(preset: PresetKey, now = new Date()): DateSelection {
   }
   const iso = toISODate(today);
   return { preset: "uma_data", startISO: iso, endISO: iso };
+}
+
+// ✅ converte seleção do UI para "query" pro /api/dashboard
+function selectionToQuery(sel: DateSelection): DashboardQuery {
+  const p = sel.preset;
+  if (p === "uma_data") return { kind: "date", date: sel.startISO };
+  if (p === "um_periodo") {
+    const ordered = clampISOOrder(sel.startISO, sel.endISO);
+    return { kind: "range", start: ordered.startISO, end: ordered.endISO };
+  }
+  return { kind: "period", period: p };
+}
+
+// ✅ monta a querystring final
+export function buildDashboardQS(q: DashboardQuery) {
+  if (q.kind === "period") return `period=${encodeURIComponent(q.period)}`;
+  if (q.kind === "date") return `date=${encodeURIComponent(q.date)}`;
+  return `start=${encodeURIComponent(q.start)}&end=${encodeURIComponent(q.end)}`;
 }
 
 /* =========================
@@ -251,10 +276,9 @@ function DatePickerFintex({
   value: DateSelection;
   onChange: (next: DateSelection) => void;
 }) {
-  // ✅ CONTROLE AQUI
-  const TRIGGER_H = 55;       // altura do campo
-  const DROPDOWN_GAP = 40;    // ✅ distância do dropdown pra baixo (aumenta aqui)
-  const DROPDOWN_W = 620;     // largura do dropdown
+  const TRIGGER_H = 55;
+  const DROPDOWN_GAP = 40;
+  const DROPDOWN_W = 620;
 
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<"presets" | "single" | "range">("presets");
@@ -416,7 +440,7 @@ function DatePickerFintex({
         <div
           style={{
             position: "absolute",
-            top: TRIGGER_H + DROPDOWN_GAP, // ✅ CONTROLE A DISTÂNCIA AQUI
+            top: TRIGGER_H + DROPDOWN_GAP,
             left: "50%",
             transform: "translateX(-50%)",
             zIndex: 50,
@@ -426,14 +450,13 @@ function DatePickerFintex({
             border: "1px solid rgba(79,220,255,0.26)",
             background:
               "radial-gradient(900px 260px at 20% 0%, rgba(79,220,255,0.20), rgba(0,0,0,0) 58%), linear-gradient(180deg, rgba(255,255,255,0.06), rgba(0,0,0,0.26))",
-            boxShadow: "0 0 0 1px rgba(79,220,255,0.10), 0 0 34px rgba(79,220,255,0.14), 0 18px 60px rgba(0,0,0,0.62)",
+            boxShadow:
+              "0 0 0 1px rgba(79,220,255,0.10), 0 0 34px rgba(79,220,255,0.14), 0 18px 60px rgba(0,0,0,0.62)",
             overflow: "hidden",
             backdropFilter: "blur(14px)",
             WebkitBackdropFilter: "blur(14px)",
           }}
         >
-          {/* ✅ REMOVIDO: header com "presets / uma data / período" + botão "fechar" */}
-
           {step === "presets" ? (
             <div style={{ padding: 12 }}>
               <div
@@ -475,7 +498,15 @@ function DatePickerFintex({
               </div>
 
               {value.startISO && value.endISO ? (
-                <div style={{ marginTop: 10, color: "rgba(255,255,255,0.55)", fontWeight: 900, fontSize: 12, textAlign: "center" }}>
+                <div
+                  style={{
+                    marginTop: 10,
+                    color: "rgba(255,255,255,0.55)",
+                    fontWeight: 900,
+                    fontSize: 12,
+                    textAlign: "center",
+                  }}
+                >
                   {formatBR(value.startISO)} - {formatBR(value.endISO)}
                 </div>
               ) : null}
@@ -615,7 +646,9 @@ function DatePickerFintex({
                     height: 34,
                     padding: "0 12px",
                     borderRadius: 12,
-                    border: `1px solid ${!rangeDraftStart || !rangeDraftEnd ? "rgba(255,255,255,0.14)" : "rgba(79,220,255,0.40)"}`,
+                    border: `1px solid ${
+                      !rangeDraftStart || !rangeDraftEnd ? "rgba(255,255,255,0.14)" : "rgba(79,220,255,0.40)"
+                    }`,
                     background: !rangeDraftStart || !rangeDraftEnd ? "rgba(255,255,255,0.06)" : "rgba(79,220,255,0.10)",
                     color: !rangeDraftStart || !rangeDraftEnd ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.92)",
                     fontWeight: 950,
@@ -643,18 +676,38 @@ export default function HeaderDashboard({
   rightSlot,
   initialPreset = "hoje",
   onDateChange,
+  onQueryChange, // ✅ novo: já manda query pro /api/dashboard
 }: {
   title: string;
   subtitle: string;
   rightSlot?: React.ReactNode;
   initialPreset?: PresetKey;
+
   onDateChange?: (sel: DateSelection) => void;
+  onQueryChange?: (q: DashboardQuery, qs: string, sel: DateSelection) => void;
 }) {
   const [sel, setSel] = useState<DateSelection>(() => computePreset(initialPreset));
 
-  useEffect(() => {
-    onDateChange?.(sel);
-  }, [sel, onDateChange]);
+const onDateChangeRef = useRef<typeof onDateChange>(onDateChange);
+const onQueryChangeRef = useRef<typeof onQueryChange>(onQueryChange);
+
+useEffect(() => {
+  onDateChangeRef.current = onDateChange;
+}, [onDateChange]);
+
+useEffect(() => {
+  onQueryChangeRef.current = onQueryChange;
+}, [onQueryChange]);
+
+useEffect(() => {
+  onDateChangeRef.current?.(sel);
+
+  const q = selectionToQuery(sel);
+  const qs = buildDashboardQS(q);
+
+  onQueryChangeRef.current?.(q, qs, sel);
+}, [sel]);
+
 
   return (
     <div style={{ padding: 0, paddingBottom: 44 }}>
@@ -693,9 +746,7 @@ export default function HeaderDashboard({
           <DatePickerFintex value={sel} onChange={setSel} />
         </div>
 
-        <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center" }}>
-          {rightSlot ? rightSlot : null}
-        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center" }}>{rightSlot ? rightSlot : null}</div>
       </div>
 
       <div style={{ height: 0 }} />
