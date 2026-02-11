@@ -8,6 +8,9 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
    ✅ Centro REAL: seletor de datas fica NO MEIO entre ESQ e DIR
    ✅ Não empurra pro lado direito
    ✅ Agora: emite onDateChange com payload pronto pro /api/dashboard
+   ✅ Subtitle agora acompanha o seletor:
+      - 1 dia: DD/MM/YYYY · dia-da-semana
+      - intervalo: DD/MM/YYYY - DD/MM/YYYY
 ========================================================= */
 
 type PresetKey =
@@ -61,11 +64,18 @@ function isSameDay(a: Date, b: Date) {
 }
 function clampISOOrder(aISO: string, bISO: string) {
   if (!aISO || !bISO) return { startISO: aISO, endISO: bISO };
-  return aISO <= bISO ? { startISO: aISO, endISO: bISO } : { startISO: bISO, endISO: aISO };
+  return aISO <= bISO ? { startISO: aISO, endISO: aISO <= bISO ? bISO : aISO } : { startISO: bISO, endISO: aISO };
 }
 function formatBR(iso: string) {
   const d = fromISODate(iso);
   return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
+function weekdayBR(iso: string) {
+  const d = fromISODate(iso);
+  // "sexta-feira"
+  const w = d.toLocaleDateString("pt-BR", { weekday: "long" });
+  // "Sexta-feira"
+  return w ? w.charAt(0).toUpperCase() + w.slice(1) : "";
 }
 function monthLabel(d: Date) {
   const meses = [
@@ -83,6 +93,23 @@ function monthLabel(d: Date) {
     "dezembro",
   ];
   return `${meses[d.getMonth()]} de ${d.getFullYear()}`;
+}
+
+// ✅ subtitle acompanha seleção
+function buildSubtitleFromSel(subtitle: string, sel: DateSelection) {
+  // pega prefixo antes do primeiro "·" (ex: "Pizza Blu")
+  const prefix = (subtitle || "").split("·")[0]?.trim() || subtitle || "";
+
+  if (!sel?.startISO || !sel?.endISO) return subtitle || "";
+
+  const startBR = formatBR(sel.startISO);
+  const endBR = formatBR(sel.endISO);
+
+  const sameDay = sel.startISO === sel.endISO;
+
+  const datePart = sameDay ? `${startBR} · ${weekdayBR(sel.startISO)}` : `${startBR} - ${endBR}`;
+
+  return prefix ? `${prefix} · ${datePart}` : datePart;
 }
 
 function computePreset(preset: PresetKey, now = new Date()): DateSelection {
@@ -269,13 +296,7 @@ function MonthGrid({
 /* =========================
    DatePicker Fintex
 ========================= */
-function DatePickerFintex({
-  value,
-  onChange,
-}: {
-  value: DateSelection;
-  onChange: (next: DateSelection) => void;
-}) {
+function DatePickerFintex({ value, onChange }: { value: DateSelection; onChange: (next: DateSelection) => void }) {
   const TRIGGER_H = 55;
   const DROPDOWN_GAP = 40;
   const DROPDOWN_W = 620;
@@ -688,26 +709,27 @@ export default function HeaderDashboard({
 }) {
   const [sel, setSel] = useState<DateSelection>(() => computePreset(initialPreset));
 
-const onDateChangeRef = useRef<typeof onDateChange>(onDateChange);
-const onQueryChangeRef = useRef<typeof onQueryChange>(onQueryChange);
+  const onDateChangeRef = useRef<typeof onDateChange>(onDateChange);
+  const onQueryChangeRef = useRef<typeof onQueryChange>(onQueryChange);
 
-useEffect(() => {
-  onDateChangeRef.current = onDateChange;
-}, [onDateChange]);
+  useEffect(() => {
+    onDateChangeRef.current = onDateChange;
+  }, [onDateChange]);
 
-useEffect(() => {
-  onQueryChangeRef.current = onQueryChange;
-}, [onQueryChange]);
+  useEffect(() => {
+    onQueryChangeRef.current = onQueryChange;
+  }, [onQueryChange]);
 
-useEffect(() => {
-  onDateChangeRef.current?.(sel);
+  useEffect(() => {
+    onDateChangeRef.current?.(sel);
 
-  const q = selectionToQuery(sel);
-  const qs = buildDashboardQS(q);
+    const q = selectionToQuery(sel);
+    const qs = buildDashboardQS(q);
 
-  onQueryChangeRef.current?.(q, qs, sel);
-}, [sel]);
+    onQueryChangeRef.current?.(q, qs, sel);
+  }, [sel]);
 
+  const subtitleText = useMemo(() => buildSubtitleFromSel(subtitle, sel), [subtitle, sel]);
 
   return (
     <div style={{ padding: 0, paddingBottom: 44 }}>
@@ -736,9 +758,9 @@ useEffect(() => {
               overflow: "hidden",
               textOverflow: "ellipsis",
             }}
-            title={subtitle}
+            title={subtitleText}
           >
-            {subtitle}
+            {subtitleText}
           </div>
         </div>
 
@@ -746,7 +768,9 @@ useEffect(() => {
           <DatePickerFintex value={sel} onChange={setSel} />
         </div>
 
-        <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center" }}>{rightSlot ? rightSlot : null}</div>
+        <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center" }}>
+          {rightSlot ? rightSlot : null}
+        </div>
       </div>
 
       <div style={{ height: 0 }} />
