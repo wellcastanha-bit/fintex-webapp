@@ -2,24 +2,27 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
+/**
+ * ✅ IMPORTANTE
+ * Em rota server (Next Route Handler), use SERVICE ROLE para evitar RLS/travas.
+ * (Se não tiver setado em algum ambiente, cai no ANON como fallback.)
+ */
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)!
 );
 
 // ✅ CONFIG DIA OPERACIONAL
-const OP_CUTOFF_HOUR = 6;       // 06:00
-const TZ_OFFSET_MIN = -180;     // Brasil (-03:00)
+const OP_CUTOFF_HOUR = 6; // 06:00
+const TZ_OFFSET_MIN = -180; // Brasil (-03:00)
 
 function num(v: any) {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 }
-
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
-
 function toISODateLocalFromMs(ms: number) {
   const d = new Date(ms);
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
@@ -32,7 +35,7 @@ function toISODateLocalFromMs(ms: number) {
 function localDateTimeToUTCISO(dateISO: string, hour: number, minute = 0, second = 0, ms = 0) {
   const [yy, mm, dd] = dateISO.split("-").map((x) => Number(x));
   const localMs = Date.UTC(yy, (mm || 1) - 1, dd || 1, hour, minute, second, ms);
-  const utcMs = localMs - (TZ_OFFSET_MIN * 60 * 1000);
+  const utcMs = localMs - TZ_OFFSET_MIN * 60 * 1000;
   return new Date(utcMs).toISOString();
 }
 
@@ -53,7 +56,7 @@ function operationalRangeUTCFromAnchor(dateISO: string) {
  */
 function currentOperationalAnchorISO() {
   const nowUtc = Date.now();
-  const nowLocalMs = nowUtc + (TZ_OFFSET_MIN * 60 * 1000);
+  const nowLocalMs = nowUtc + TZ_OFFSET_MIN * 60 * 1000;
   const nowLocal = new Date(nowLocalMs);
 
   let anchorISO = `${nowLocal.getFullYear()}-${pad2(nowLocal.getMonth() + 1)}-${pad2(nowLocal.getDate())}`;
@@ -65,6 +68,40 @@ function currentOperationalAnchorISO() {
   }
 
   return anchorISO;
+}
+
+/**
+ * ✅ CORREÇÃO DO ERRO "payment_method_check"
+ * O teu PDV manda "DÉBITO", "CRÉDITO", "ONLINE" etc.
+ * O banco provavelmente aceita só os CANÔNICOS abaixo.
+ *
+ * Se não reconhecer, retorna null (melhor que quebrar insert).
+ */
+function normalizePaymentMethod(v: any): string | null {
+  const raw = String(v ?? "").trim();
+  if (!raw) return null;
+
+  const up = raw
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // tira acentos
+    .toUpperCase();
+
+  // já canônicos (com/sem acento)
+  if (up === "DINHEIRO") return "DINHEIRO";
+  if (up === "PIX") return "PIX";
+  if (up === "CARTAO DE DEBITO" || up === "CARTÃO DE DÉBITO") return "CARTÃO DE DÉBITO";
+  if (up === "CARTAO DE CREDITO" || up === "CARTÃO DE CRÉDITO") return "CARTÃO DE CRÉDITO";
+  if (up === "PAGAMENTO ONLINE") return "PAGAMENTO ONLINE";
+
+  // mapeia botões curtos do PDV
+  if (up.includes("DIN")) return "DINHEIRO";
+  if (up.includes("PIX")) return "PIX";
+  if (up.includes("DEB")) return "CARTÃO DE DÉBITO";
+  if (up.includes("CRED")) return "CARTÃO DE CRÉDITO";
+  if (up.includes("ONLINE")) return "PAGAMENTO ONLINE";
+
+  // não reconhecido -> não quebra constraint
+  return null;
 }
 
 /* =========================
@@ -147,6 +184,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "INVALID_JSON" }, { status: 400 });
   }
 
+  const payment = normalizePaymentMethod(body?.payment_method);
+
   const payload = {
     // se não mandar, banco usa default current_date
     order_date: body?.order_date ?? undefined,
@@ -154,7 +193,9 @@ export async function POST(req: Request) {
     customer_name: body?.customer_name ?? null,
     platform: body?.platform ?? null,
     service_type: body?.service_type ?? null,
-    payment_method: body?.payment_method ?? null,
+
+    // ✅ aqui resolve o 500 do check constraint
+    payment_method: payment,
 
     bairros: body?.bairros ?? null,
     taxa_entrega: num(body?.taxa_entrega),
@@ -170,7 +211,17 @@ export async function POST(req: Request) {
   const { data, error } = await supabase.from("orders").insert(payload).select("*").single();
 
   if (error) {
-    return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: error.message,
+        debug: {
+          sent_payment_method: body?.payment_method ?? null,
+          normalized_payment_method: payment,
+        },
+      },
+      { status: 500 }
+    );
   }
 
   return NextResponse.json({ ok: true, row: data });

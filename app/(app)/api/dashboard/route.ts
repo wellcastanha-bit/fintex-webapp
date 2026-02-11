@@ -87,23 +87,6 @@ function firstDayPrevMonthISO(iso: string) {
   return `${py}-${pad2(pmm)}-01`;
 }
 
-// ✅ normaliza pagamentos pra não existir "ONLINE", "DÉBITO" etc separado
-function normalizePayment(raw: string | null | undefined) {
-  const x = (raw || "").trim().toUpperCase();
-
-  if (!x) return "OUTROS";
-  if (x.includes("DIN")) return "DINHEIRO";
-  if (x.includes("PIX")) return "PIX";
-  if (x.includes("DEB")) return "CARTÃO DE DÉBITO";
-  if (x.includes("CRÉD") || x.includes("CRED")) return "CARTÃO DE CRÉDITO";
-  if (x.includes("ONLINE")) return "PAGAMENTO ONLINE";
-
-  // se já veio certinho:
-  if (x === "CARTÃO DE DÉBITO" || x === "CARTÃO DE CRÉDITO" || x === "PAGAMENTO ONLINE") return x;
-
-  return x;
-}
-
 function resolveRange(params: URLSearchParams) {
   const periodRaw = (params.get("period") || "hoje").toLowerCase();
   const date = params.get("date"); // YYYY-MM-DD (local)
@@ -230,8 +213,8 @@ export async function GET(req: NextRequest) {
     const despesas = 0;
     const despesas_pct = faturamento > 0 ? despesas / faturamento : 0;
 
-    // ✅ aqui entra a normalização
-    const byPagamento = groupAgg(rows, (r) => normalizePayment(r.payment_method));
+    // ✅ sem normalização: mostra exatamente o que está salvo
+    const byPagamento = groupAgg(rows, (r) => (r.payment_method || "OUTROS").trim().toUpperCase());
     const byPlataforma = groupAgg(rows, (r) => (r.platform || "OUTROS").trim().toUpperCase());
     const byAtendimento = groupAgg(rows, (r) => (r.service_type || "OUTROS").trim().toUpperCase());
 
