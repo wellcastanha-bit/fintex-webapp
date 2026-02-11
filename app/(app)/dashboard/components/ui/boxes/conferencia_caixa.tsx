@@ -1,8 +1,8 @@
 // app/dashboard/components/boxes/conferencia_caixa.tsx
 "use client";
 
-import React from "react";
-import { CardShell, SectionTitle, fmtBRL } from "../card_shell";
+import React, { useMemo, useState } from "react";
+import { CardShell, fmtBRL } from "../card_shell";
 
 export type ConferenciaData = {
   status: "OK" | "ATENÇÃO";
@@ -13,96 +13,117 @@ export type ConferenciaData = {
   quebra: number;
 };
 
+/* =========================
+   PADRÃO FINtEX (igual Pedidos Plataforma final)
+========================= */
+const OUTER_RADIUS = 20;
+const OUTER_BORDER = "1px solid rgba(79,220,255,0.34)";
+const OUTER_BG = "linear-gradient(180deg, rgba(255,255,255,0.03), rgba(0,0,0,0.12))";
+const OUTER_SHADOW_OFF =
+  "0 0 0 1px rgba(79,220,255,0.14), 0 0 40px rgba(79,220,255,0.16), 0 18px 60px rgba(0,0,0,0.62)";
+const OUTER_SHADOW_ON =
+  "0 0 0 1px rgba(79,220,255,0.18), 0 0 52px rgba(79,220,255,0.20), 0 18px 60px rgba(0,0,0,0.62)";
+
+type Tone = "blue" | "green" | "red";
+
+function toneMap(tone: Tone) {
+  const map = {
+    blue: {
+      bd: "rgba(79,220,255,0.38)",
+      bdHover: "rgba(79,220,255,0.62)",
+      glow: "rgba(79,220,255,0.20)",
+      innerTop: "rgba(255,255,255,0.08)",
+      innerBot: "rgba(0,0,0,0.22)",
+      tag: "rgba(79,220,255,0.96)",
+    },
+    green: {
+      bd: "rgba(67,208,121,0.38)",
+      bdHover: "rgba(67,208,121,0.62)",
+      glow: "rgba(67,208,121,0.18)",
+      innerTop: "rgba(255,255,255,0.08)",
+      innerBot: "rgba(0,0,0,0.22)",
+      tag: "rgba(67, 208, 121, 0.95)",
+    },
+    red: {
+      bd: "rgba(255,107,107,0.40)",
+      bdHover: "rgba(255,107,107,0.66)",
+      glow: "rgba(255,107,107,0.18)",
+      innerTop: "rgba(255,255,255,0.08)",
+      innerBot: "rgba(0,0,0,0.22)",
+      tag: "rgba(255, 107, 107, 0.95)",
+    },
+  } as const;
+
+  return map[tone];
+}
+
 function MiniStat({
   label,
   value,
-  tone = "neutral",
+  tone,
 }: {
   label: string;
   value: string;
-  tone?: "neutral" | "blue" | "green" | "red";
+  tone: Tone;
 }) {
-  const t = {
-    neutral: {
-      bd: "rgba(255,255,255,0.10)",
-      bgTop: "rgba(255,255,255,0.04)",
-      glow: "rgba(79,220,255,0.06)",
-      hoverBd: "rgba(79,220,255,0.26)",
-      hoverGlow: "rgba(79,220,255,0.14)",
-    },
-    blue: {
-      bd: "rgba(79,220,255,0.22)",
-      bgTop: "rgba(79,220,255,0.10)",
-      glow: "rgba(79,220,255,0.14)",
-      hoverBd: "rgba(79,220,255,0.38)",
-      hoverGlow: "rgba(79,220,255,0.22)",
-    },
-    green: {
-      bd: "rgba(67,208,121,0.22)",
-      bgTop: "rgba(67,208,121,0.10)",
-      glow: "rgba(67,208,121,0.12)",
-      hoverBd: "rgba(67,208,121,0.36)",
-      hoverGlow: "rgba(67,208,121,0.20)",
-    },
-    red: {
-      bd: "rgba(255,107,107,0.22)",
-      bgTop: "rgba(255,107,107,0.10)",
-      glow: "rgba(255,107,107,0.12)",
-      hoverBd: "rgba(255,107,107,0.36)",
-      hoverGlow: "rgba(255,107,107,0.20)",
-    },
-  }[tone];
+  const [hover, setHover] = useState(false);
+  const t = useMemo(() => toneMap(tone), [tone]);
 
   return (
     <div
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
       style={{
-        borderRadius: 16,
-        border: `1px solid ${t.bd}`,
-        background: `linear-gradient(180deg, ${t.bgTop}, rgba(0,0,0,0.10))`,
-        boxShadow: `0 0 0 1px rgba(79,220,255,0.04) inset, 0 0 24px ${t.glow}`,
-        padding: 12,
-        minHeight: 74,
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "space-between",
-        gap: 8,
-        transition: "all .18s ease",
-        backdropFilter: "blur(10px)",
-        WebkitBackdropFilter: "blur(10px)",
-      }}
-      onMouseEnter={(e) => {
-        const el = e.currentTarget as HTMLDivElement;
-        el.style.border = `1px solid ${t.hoverBd}`;
-        el.style.boxShadow = `0 0 0 1px rgba(79,220,255,0.10) inset, 0 0 28px ${t.hoverGlow}`;
-        el.style.backdropFilter = "blur(14px)";
-        (el.style as any).WebkitBackdropFilter = "blur(14px)";
-      }}
-      onMouseLeave={(e) => {
-        const el = e.currentTarget as HTMLDivElement;
-        el.style.border = `1px solid ${t.bd}`;
-        el.style.boxShadow = `0 0 0 1px rgba(79,220,255,0.04) inset, 0 0 24px ${t.glow}`;
-        el.style.backdropFilter = "blur(10px)";
-        (el.style as any).WebkitBackdropFilter = "blur(10px)";
+        borderRadius: 18,
+        border: `1px solid ${hover ? t.bdHover : t.bd}`,
+        background: hover
+          ? "linear-gradient(180deg, rgba(255,255,255,0.10), rgba(0,0,0,0.24))"
+          : `linear-gradient(180deg, ${t.innerTop}, ${t.innerBot})`,
+        boxShadow: hover
+          ? `0 0 0 1px rgba(255,255,255,0.06),
+             0 0 34px ${t.glow},
+             0 18px 55px rgba(0,0,0,0.58)`
+          : `0 0 18px ${t.glow}`,
+        padding: 16,
+        minHeight: 92,
+        transition:
+          "border-color 180ms ease, box-shadow 180ms ease, background 180ms ease, transform 180ms ease, filter 180ms ease",
+        transform: hover ? "translateY(-1px)" : "translateY(0px)",
+        filter: hover ? "brightness(1.06)" : "brightness(1)",
       }}
     >
+      {/* ✅ label + canto na mesma cor (tag) */}
       <div
         style={{
-          color: "rgba(255,255,255,0.70)",
-          fontWeight: 950,
-          fontSize: 15,
-          letterSpacing: 0.5,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
         }}
       >
-        {label}
+        <div
+          style={{
+            color: t.tag,
+            fontWeight: 950,
+            fontSize: 15,
+            letterSpacing: 0.6,
+            textTransform: "uppercase",
+          }}
+        >
+          {label}
+        </div>
+
+        {/* sem corner aqui (não precisa), mas deixei o layout igual */}
+        <div style={{ width: 1, height: 1, opacity: 0 }} />
       </div>
 
       <div
         style={{
+          marginTop: 12,
           color: "rgba(255,255,255,0.96)",
-          fontWeight: 985,
-          fontSize: 20,
-          letterSpacing: 0.2,
-          textShadow: "0 2px 16px rgba(0,0,0,0.35)",
+          fontWeight: 990,
+          fontSize: 25,
+          letterSpacing: -0.2,
         }}
       >
         {value}
@@ -112,8 +133,10 @@ function MiniStat({
 }
 
 export default function ConferenciaCaixa({ data }: { data: ConferenciaData }) {
+  const [outerHover, setOuterHover] = useState(false);
+
   const quebraAbs = Math.abs(Number(data.quebra || 0));
-  const dangerQuebra = quebraAbs > 5; // ✅ regra: acima de R$ 5,00 fica vermelho
+  const dangerQuebra = quebraAbs > 5;
 
   const statusPalette = dangerQuebra
     ? {
@@ -154,96 +177,80 @@ export default function ConferenciaCaixa({ data }: { data: ConferenciaData }) {
       };
 
   return (
-    <CardShell
+    <div
+      onMouseEnter={() => setOuterHover(true)}
+      onMouseLeave={() => setOuterHover(false)}
       style={{
-        // ✅ borda aqua mais visível no retângulo externo principal
-        border: "1px solid rgba(79,220,255,0.28)",
-        boxShadow:
-          "0 0 0 1px rgba(79,220,255,0.14), 0 18px 55px rgba(0,0,0,0.55)",
-        transition: "all .18s ease",
+        borderRadius: OUTER_RADIUS,
+        border: OUTER_BORDER, // ✅ sempre marcada
+        boxShadow: outerHover ? OUTER_SHADOW_ON : OUTER_SHADOW_OFF,
+        background: OUTER_BG,
+        backdropFilter: outerHover ? "blur(16px)" : "blur(12px)",
+        WebkitBackdropFilter: outerHover ? "blur(16px)" : "blur(12px)",
+        transition: "box-shadow 180ms ease, backdrop-filter 180ms ease, filter 180ms ease",
+        filter: outerHover ? "brightness(1.03)" : "brightness(1)",
+        overflow: "hidden",
       }}
     >
-      {/* ✅ blur externo no CardShell ao passar o mouse */}
-      <div
-        style={{ borderRadius: 18 }}
-        onMouseEnter={(e) => {
-          const shell = (e.currentTarget.parentElement as HTMLDivElement) || null;
-          if (!shell) return;
-          shell.style.border = "1px solid rgba(79,220,255,0.40)";
-          shell.style.boxShadow =
-            "0 0 0 1px rgba(79,220,255,0.18), 0 0 34px rgba(79,220,255,0.18), 0 18px 55px rgba(0,0,0,0.58)";
-          shell.style.backdropFilter = "blur(10px)";
-          (shell.style as any).WebkitBackdropFilter = "blur(10px)";
-        }}
-        onMouseLeave={(e) => {
-          const shell = (e.currentTarget.parentElement as HTMLDivElement) || null;
-          if (!shell) return;
-          shell.style.border = "1px solid rgba(79,220,255,0.28)";
-          shell.style.boxShadow =
-            "0 0 0 1px rgba(79,220,255,0.14), 0 18px 55px rgba(0,0,0,0.55)";
-          shell.style.backdropFilter = "none";
-          (shell.style as any).WebkitBackdropFilter = "none";
-        }}
-      >
-        <SectionTitle
-          // ✅ aumenta fonte do título "Conferência de Caixa"
-          title={<span style={{ fontSize: 16, fontWeight: 980 }}>Conferência de Caixa</span> as any}
-          right={
-            <div
-              style={{
-                height: 28,
-                padding: "0 12px",
-                borderRadius: 999,
-                border: `1px solid ${statusPalette.bd}`,
-                background: statusPalette.bg,
-                color: "rgba(255,255,255,0.92)",
-                fontWeight: 950,
-                fontSize: 15,
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 10,
-                boxShadow: `0 0 22px ${statusPalette.glow}`,
-                backdropFilter: "blur(10px)",
-                WebkitBackdropFilter: "blur(10px)",
-                transition: "all .18s ease",
-              }}
-              onMouseEnter={(e) => {
-                const el = e.currentTarget as HTMLDivElement;
-                // ✅ somente blur externo no hover (status)
-                el.style.boxShadow = `0 0 28px ${statusPalette.glow}`;
-                el.style.backdropFilter = "blur(14px)";
-                (el.style as any).WebkitBackdropFilter = "blur(14px)";
-              }}
-              onMouseLeave={(e) => {
-                const el = e.currentTarget as HTMLDivElement;
-                el.style.boxShadow = `0 0 22px ${statusPalette.glow}`;
-                el.style.backdropFilter = "blur(10px)";
-                (el.style as any).WebkitBackdropFilter = "blur(10px)";
-              }}
-              title={dangerQuebra ? "Quebra de caixa acima de R$ 5,00" : undefined}
-            >
-              <span
-                style={{
-                  width: 9,
-                  height: 9,
-                  borderRadius: 999,
-                  background: statusPalette.dot,
-                  boxShadow: `0 0 14px ${statusPalette.glow}`,
-                  display: "inline-block",
-                }}
-              />
-              Status: {statusPalette.label}
-            </div>
-          }
-        />
+      <CardShell style={{ border: "1px solid rgba(0,0,0,0)", boxShadow: "none" }}>
+        {/* HEADER ORGANIZADO (igual padrão) */}
+        <div
+          style={{
+            padding: "16px 18px 12px 18px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+          }}
+        >
+          <div style={{ color: "rgba(255,255,255,0.92)", fontWeight: 980, fontSize: 18 }}>
+            Conferência de Caixa
+          </div>
 
-        <div style={{ padding: "0 16px 16px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
+          <div
+            style={{
+              height: 28,
+              padding: "0 12px",
+              borderRadius: 999,
+              border: `1px solid ${statusPalette.bd}`,
+              background: statusPalette.bg,
+              color: "rgba(255,255,255,0.92)",
+              fontWeight: 950,
+              fontSize: 15,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 10,
+              boxShadow: `0 0 22px ${statusPalette.glow}`,
+              backdropFilter: "blur(10px)",
+              WebkitBackdropFilter: "blur(10px)",
+              transition: "box-shadow 180ms ease, backdrop-filter 180ms ease, filter 180ms ease",
+              whiteSpace: "nowrap",
+            }}
+            title={dangerQuebra ? "Quebra de caixa acima de R$ 5,00" : undefined}
+          >
+            <span
+              style={{
+                width: 9,
+                height: 9,
+                borderRadius: 999,
+                background: statusPalette.dot,
+                boxShadow: `0 0 14px ${statusPalette.glow}`,
+                display: "inline-block",
+              }}
+            />
+            Status: {statusPalette.label}
+          </div>
+        </div>
+
+        <div style={{ padding: "0 18px 18px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
+          {/* 3 mini cards */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
             <MiniStat label="Caixa inicial" value={fmtBRL(data.caixaInicial)} tone="blue" />
             <MiniStat label="Entradas (dinheiro)" value={fmtBRL(data.entradasDinheiro)} tone="green" />
             <MiniStat label="Saídas" value={fmtBRL(data.saidas)} tone="red" />
           </div>
 
+          {/* Caixa final (tile grande) */}
           <div
             style={{
               position: "relative",
@@ -257,23 +264,7 @@ export default function ConferenciaCaixa({ data }: { data: ConferenciaData }) {
               overflow: "hidden",
               backdropFilter: "blur(12px)",
               WebkitBackdropFilter: "blur(12px)",
-              transition: "all .18s ease",
-            }}
-            onMouseEnter={(e) => {
-              const el = e.currentTarget as HTMLDivElement;
-              el.style.border = "1px solid rgba(79,220,255,0.32)";
-              el.style.boxShadow =
-                "0 0 0 1px rgba(79,220,255,0.14) inset, 0 0 40px rgba(79,220,255,0.18), 0 18px 55px rgba(0,0,0,0.56)";
-              el.style.backdropFilter = "blur(16px)";
-              (el.style as any).WebkitBackdropFilter = "blur(16px)";
-            }}
-            onMouseLeave={(e) => {
-              const el = e.currentTarget as HTMLDivElement;
-              el.style.border = "1px solid rgba(79,220,255,0.18)";
-              el.style.boxShadow =
-                "0 0 0 1px rgba(79,220,255,0.10) inset, 0 0 32px rgba(79,220,255,0.12), 0 18px 55px rgba(0,0,0,0.52)";
-              el.style.backdropFilter = "blur(12px)";
-              (el.style as any).WebkitBackdropFilter = "blur(12px)";
+              transition: "all 180ms ease",
             }}
           >
             <div
@@ -281,19 +272,34 @@ export default function ConferenciaCaixa({ data }: { data: ConferenciaData }) {
                 position: "absolute",
                 inset: -2,
                 borderRadius: 20,
-                background:
-                  "radial-gradient(110% 80% at 25% 0%, rgba(79,220,255,0.12), rgba(0,0,0,0) 62%)",
+                background: "radial-gradient(110% 80% at 25% 0%, rgba(79,220,255,0.12), rgba(0,0,0,0) 62%)",
                 pointerEvents: "none",
               }}
             />
 
             <div style={{ position: "relative" }}>
-              <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "flex-end",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  flexWrap: "wrap",
+                }}
+              >
                 <div>
-                  <div style={{ color: "rgb(255, 255, 255)", fontWeight: 950, fontSize: 15, letterSpacing: 0.5 }}>
+                  <div style={{ color: "rgb(255, 255, 255)", fontWeight: 980, fontSize: 18 }}>
                     Caixa final
                   </div>
-                  <div style={{ marginTop: 10, color: "rgba(255,255,255,0.98)", fontWeight: 990, fontSize: 30, letterSpacing: 0.2 }}>
+                  <div
+                    style={{
+                      marginTop: 10,
+                      color: "#4dd5f8",
+                      fontWeight: 990,
+                      fontSize: 34,
+                      letterSpacing: 0.2,
+                    }}
+                  >
                     {fmtBRL(data.caixaFinal)}
                   </div>
                 </div>
@@ -314,20 +320,8 @@ export default function ConferenciaCaixa({ data }: { data: ConferenciaData }) {
                     boxShadow: `0 0 22px ${quebraPalette.glow}`,
                     backdropFilter: "blur(10px)",
                     WebkitBackdropFilter: "blur(10px)",
-                    transition: "all .18s ease",
-                  }}
-                  onMouseEnter={(e) => {
-                    const el = e.currentTarget as HTMLDivElement;
-                    // ✅ somente blur externo no hover (quebra)
-                    el.style.boxShadow = `0 0 28px ${quebraPalette.glow}`;
-                    el.style.backdropFilter = "blur(14px)";
-                    (el.style as any).WebkitBackdropFilter = "blur(14px)";
-                  }}
-                  onMouseLeave={(e) => {
-                    const el = e.currentTarget as HTMLDivElement;
-                    el.style.boxShadow = `0 0 22px ${quebraPalette.glow}`;
-                    el.style.backdropFilter = "blur(10px)";
-                    (el.style as any).WebkitBackdropFilter = "blur(10px)";
+                    transition: "box-shadow 180ms ease, backdrop-filter 180ms ease, filter 180ms ease",
+                    whiteSpace: "nowrap",
                   }}
                   title={dangerQuebra ? "Quebra de caixa acima de R$ 5,00" : "Diferença entre o caixa final e os registros"}
                 >
@@ -338,17 +332,17 @@ export default function ConferenciaCaixa({ data }: { data: ConferenciaData }) {
                 </div>
               </div>
 
-              <div style={{ marginTop: 10, color: "rgba(255,255,255,0.66)", fontWeight: 900, fontSize: 12 }}>
+              <div style={{ marginTop: 10, color: "rgb(255, 255, 255)", fontWeight: 900, fontSize: 12 }}>
                 {dangerQuebra
                   ? "Quebra acima de R$ 5,00 — conferir lançamentos e contadores antes de fechar."
                   : data.status === "OK"
-                  ? "Caixa conferido com os registros do sistema."
+                  ? ""
                   : "Conferir lançamentos e contadores antes de fechar o dia."}
               </div>
             </div>
           </div>
         </div>
-      </div>
-    </CardShell>
+      </CardShell>
+    </div>
   );
 }

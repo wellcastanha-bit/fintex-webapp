@@ -1,7 +1,46 @@
 // app/dashboard/components/boxes/cards_topo.tsx
 "use client";
 
-import React from "react";
+import React, { useMemo, useState } from "react";
+
+function accentMap(accent: "aqua" | "green" | "red" | "gray") {
+  const map = {
+    aqua: {
+      bd: "rgba(79,220,255,0.34)",
+      bdHover: "rgba(79,220,255,0.60)",
+      glow: "rgba(79,220,255,0.18)",
+      innerTop: "rgba(255,255,255,0.08)",
+      innerBot: "rgba(0,0,0,0.22)",
+      tag: "rgba(79, 220, 255, 0.96)",
+    },
+    green: {
+      bd: "rgba(67,208,121,0.34)",
+      bdHover: "rgba(67,208,121,0.60)",
+      glow: "rgba(67,208,121,0.16)",
+      innerTop: "rgba(255,255,255,0.08)",
+      innerBot: "rgba(0,0,0,0.22)",
+      tag: "rgba(67, 208, 121, 0.95)",
+    },
+    red: {
+      bd: "rgba(255,107,107,0.34)",
+      bdHover: "rgba(255,107,107,0.62)",
+      glow: "rgba(255,107,107,0.16)",
+      innerTop: "rgba(255,255,255,0.08)",
+      innerBot: "rgba(0,0,0,0.22)",
+      tag: "rgba(255, 107, 107, 0.95)",
+    },
+    gray: {
+      bd: "rgba(255,255,255,0.26)",
+      bdHover: "rgba(255,255,255,0.40)",
+      glow: "rgba(255,255,255,0.10)",
+      innerTop: "rgba(255,255,255,0.08)",
+      innerBot: "rgba(0,0,0,0.22)",
+      tag: "rgb(255, 255, 255)",
+    },
+  } as const;
+
+  return map[accent];
+}
 
 function MetricCard({
   title,
@@ -14,32 +53,79 @@ function MetricCard({
   sub: string;
   accent?: "aqua" | "green" | "red" | "gray";
 }) {
-  const map = {
-    aqua: { top: "rgba(79,220,255,0.14)", bd: "rgba(79,220,255,0.18)" },
-    green: { top: "rgba(67,208,121,0.16)", bd: "rgba(67,208,121,0.20)" },
-    red: { top: "rgba(255,107,107,0.16)", bd: "rgba(255,107,107,0.20)" },
-    gray: { top: "rgba(255,255,255,0.08)", bd: "rgba(255,255,255,0.12)" },
-  }[accent];
+  const [hover, setHover] = useState(false);
+  const m = useMemo(() => accentMap(accent), [accent]);
 
   return (
     <div
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
       style={{
         borderRadius: 18,
-        border: `1px solid ${map.bd}`,
-        background: `linear-gradient(180deg, ${map.top}, rgba(255,255,255,0.02))`,
-        boxShadow:
-          "0 0 0 1px rgba(79,220,255,0.05), 0 18px 55px rgba(0,0,0,0.45)",
+        border: `1px solid ${hover ? m.bdHover : m.bd}`,
+        background: hover
+          ? `linear-gradient(180deg, rgba(255,255,255,0.10), rgba(0,0,0,0.24))`
+          : `linear-gradient(180deg, ${m.innerTop}, ${m.innerBot})`,
+        boxShadow: hover
+          ? `0 0 0 1px rgba(255,255,255,0.06),
+             0 0 34px ${m.glow},
+             0 18px 55px rgba(0,0,0,0.58)`
+          : `0 0 18px ${m.glow}`,
         padding: 16,
-        minHeight: 92,
+        minHeight: 108,
+        backdropFilter: "none",
+        WebkitBackdropFilter: "none",
+        transition:
+          "border-color 180ms ease, box-shadow 180ms ease, background 180ms ease, transform 180ms ease, filter 180ms ease",
+        transform: hover ? "translateY(-1px)" : "translateY(0px)",
+        filter: hover ? "brightness(1.06)" : "brightness(1)",
       }}
     >
-      <div style={{ color: "rgb(255, 255, 255)", fontWeight: 900, fontSize: 15 }}>
-        {title}
+      {/* ✅ título e “valor” no topo usando a mesma cor (m.tag) */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+        }}
+      >
+        <div
+          style={{
+            color: m.tag,
+            fontWeight: 950,
+            fontSize: 15,
+            letterSpacing: 0.6,
+            textTransform: "uppercase",
+          }}
+        >
+          {title}
+        </div>
+
+        {/* canto direito (opcional): mantém vazio para não quebrar layout */}
+        <div style={{ color: m.tag, fontWeight: 950, fontSize: 15, letterSpacing: 0.2 }} />
       </div>
-      <div style={{ marginTop: 10, color: "rgba(255,255,255,0.95)", fontWeight: 980, fontSize: 24 }}>
+
+      <div
+        style={{
+          marginTop: 12,
+          color: "rgba(255,255,255,0.96)",
+          fontWeight: 990,
+          fontSize: 25,
+          letterSpacing: -0.2,
+        }}
+      >
         {value}
       </div>
-      <div style={{ marginTop: 6, color: "rgba(255,255,255,0.62)", fontWeight: 850, fontSize: 15 }}>
+
+      <div
+        style={{
+          marginTop: 8,
+          color: "rgb(248, 246, 246)",
+          fontWeight: 850,
+          fontSize: 15,
+        }}
+      >
         {sub}
       </div>
     </div>

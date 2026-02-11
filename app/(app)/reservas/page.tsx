@@ -354,7 +354,7 @@ export default function ReservasPage() {
             </span>
           ) : (
             <span>
-              Backend: <span style={{ color: AQUA }}>OK</span>
+              <span style={{ color: AQUA }}></span>
             </span>
           )}
         </div>

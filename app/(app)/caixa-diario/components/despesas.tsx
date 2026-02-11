@@ -252,7 +252,7 @@ export default function DespesasTab({
   useMemo(() => {
     // mantém o useMemo (não quebra), mesmo que tu não use label aqui
     const map: Record<string, string> = {
-      operacional: "Operacional",
+      operacional: "Mão de Obra",
       logistica: "Logística",
       insumos: "Insumos",
       marketing: "Marketing",
@@ -313,7 +313,7 @@ export default function DespesasTab({
                         Selecione
                       </option>
 
-                      <option value="operacional">Operacional</option>
+                      <option value="operacional">Mão de Obra</option>
                       <option value="logistica">Logística</option>
                       <option value="insumos">Insumos</option>
                       <option value="marketing">Marketing</option>
@@ -336,12 +336,7 @@ export default function DespesasTab({
                 </div>
 
                 <FieldShell glowOn={hoverField === "valor"}>
-                  <UiInput
-                    placeholder="0,00"
-                    value={expenseAmount}
-                    onChange={(e) => setExpenseAmount(e.target.value)}
-                    inputMode="decimal"
-                  />
+                  <UiInput placeholder="0,00" value={expenseAmount} onChange={(e) => setExpenseAmount(e.target.value)} inputMode="decimal" />
                 </FieldShell>
               </div>
 

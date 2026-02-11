@@ -1,7 +1,7 @@
 // app/dashboard/components/boxes/ranking_pagamentos.tsx
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { CardShell, SectionTitle, fmtBRL, pct } from "../card_shell";
 
 export type RankingPagamentoRow = {
@@ -22,44 +22,63 @@ function BarRow({
   pctValue: number;
   rank: number;
 }) {
-  const w = Math.max(2, Math.min(100, pctValue));
+  const [hover, setHover] = useState(false);
+
+  const w = Math.max(0, Math.min(100, pctValue));
+
   return (
     <div
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
       style={{
-        padding: "12px 12px",
-        borderRadius: 14,
-        border: "1px solid rgba(255,255,255,0.10)",
-        background: "rgba(0,0,0,0.16)",
+        padding: "14px 14px",
+        borderRadius: 16,
+        border: `1px solid ${hover ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.12)"}`,
+        background: hover
+          ? "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(0,0,0,0.20))"
+          : "linear-gradient(180deg, rgba(255,255,255,0.04), rgba(0,0,0,0.18))",
+        boxShadow: hover
+          ? "0 0 0 1px rgba(255,255,255,0.06), 0 18px 55px rgba(0,0,0,0.55)"
+          : "0 18px 55px rgba(0,0,0,0.45)",
+        transition:
+          "border-color 180ms ease, box-shadow 180ms ease, background 180ms ease, filter 180ms ease, transform 180ms ease",
+        transform: hover ? "translateY(-1px)" : "translateY(0px)",
+        filter: hover ? "brightness(1.04)" : "brightness(1)",
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
         <div style={{ minWidth: 0 }}>
-          <div style={{ color: "rgba(255,255,255,0.92)", fontWeight: 950, fontSize: 12 }}>
+          <div style={{ color: "#4dd5f8", fontWeight: 950, fontSize: 15 }}>
             {label}
           </div>
-          <div style={{ marginTop: 4, color: "rgba(255,255,255,0.70)", fontWeight: 850, fontSize: 11 }}>
+          <div style={{ marginTop: 6, color: "rgba(255,255,255,0.95)", fontWeight: 850, fontSize: 15 }}>
             {subtitle}
           </div>
         </div>
-        <div style={{ color: "rgba(255,255,255,0.55)", fontWeight: 950, fontSize: 11 }}>{`#${rank}`}</div>
+
+        <div style={{ color: "#4dd5f8", fontWeight: 950, fontSize: 15, whiteSpace: "nowrap" }}>
+          {`#${rank}`}
+        </div>
       </div>
 
+      {/* ✅ BARRINHA COPIADA DO DASHBOARD PRINCIPAL (RankRow) */}
       <div
         style={{
-          marginTop: 10,
+          marginTop: 8,
           height: 8,
           borderRadius: 999,
           background: "rgba(255,255,255,0.08)",
-          border: "1px solid rgba(255,255,255,0.10)",
           overflow: "hidden",
+          border: "1px solid rgba(79,220,255,0.10)",
         }}
       >
         <div
           style={{
             width: `${w}%`,
             height: "100%",
-            background: "rgba(79,220,255,0.85)",
-            boxShadow: "0 0 18px rgba(79,220,255,0.35)",
+            background:
+              "linear-gradient(90deg, rgba(79,220,255,0.30) 0%, #4dd5f8 55%, rgba(255,255,255,0.25) 100%)",
+            boxShadow: "0 0 20px rgba(79,220,255,0.18)",
           }}
         />
       </div>
@@ -68,20 +87,70 @@ function BarRow({
 }
 
 export default function RankingPagamentos({ rows }: { rows: RankingPagamentoRow[] }) {
+  const [outerHover, setOuterHover] = useState(false);
+
   return (
-    <CardShell>
-      <SectionTitle title="Ranking de Pagamentos" />
-      <div style={{ padding: "0 16px 16px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
-        {rows.map((r, idx) => (
-          <BarRow
-            key={r.key}
-            label={r.key}
-            subtitle={`${r.pedidos} pedidos · ${fmtBRL(r.valor)} · ${pct(r.pct)}`}
-            pctValue={r.pct}
-            rank={idx + 1}
-          />
-        ))}
-      </div>
-    </CardShell>
+    <div
+      onMouseEnter={() => setOuterHover(true)}
+      onMouseLeave={() => setOuterHover(false)}
+      style={{
+        borderRadius: 20,
+        border: "1px solid rgba(79,220,255,0.34)",
+        boxShadow: outerHover
+          ? "0 0 0 1px rgba(79,220,255,0.18), 0 0 52px rgba(79,220,255,0.20), 0 18px 60px rgba(0,0,0,0.62)"
+          : "0 0 0 1px rgba(79,220,255,0.14), 0 0 40px rgba(79,220,255,0.16), 0 18px 60px rgba(0,0,0,0.62)",
+        background: "linear-gradient(180deg, rgba(255,255,255,0.03), rgba(0,0,0,0.12))",
+        backdropFilter: outerHover ? "blur(16px)" : "blur(12px)",
+        WebkitBackdropFilter: outerHover ? "blur(16px)" : "blur(12px)",
+        transition: "box-shadow 180ms ease, backdrop-filter 180ms ease, filter 180ms ease",
+        filter: outerHover ? "brightness(1.03)" : "brightness(1)",
+        overflow: "hidden",
+      }}
+    >
+<CardShell style={{ border: "1px solid rgba(0,0,0,0)", boxShadow: "none" }}>
+  {/* HEADER ORGANIZADO */}
+  <div
+    style={{
+      padding: "16px 16px 10px 16px",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+    }}
+  >
+    <div
+      style={{
+        fontSize: 18,              // 🔥 altera aqui
+        fontWeight: 950,           // 🔥 altera aqui
+        letterSpacing: 0.2,
+        color: "rgb(255, 255, 255)",
+      }}
+    >
+      Ranking de Pagamentos
+    </div>
+  </div>
+
+  {/* CONTEÚDO */}
+  <div
+    style={{
+      padding: "0 16px 16px 16px",
+      display: "flex",
+      flexDirection: "column",
+      gap: 10,
+    }}
+  >
+    {rows.map((r, idx) => (
+      <BarRow
+        key={r.key}
+        label={r.key}
+        subtitle={`${r.pedidos} pedidos · ${fmtBRL(r.valor)} · ${pct(r.pct)}`}
+        pctValue={r.pct}
+        rank={idx + 1}
+      />
+    ))}
+  </div>
+</CardShell>
+
+    </div>
   );
 }
