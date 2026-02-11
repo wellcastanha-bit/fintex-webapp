@@ -71,11 +71,30 @@ function currentOperationalAnchorISO() {
 }
 
 /**
+ * ✅ PLATFORM: você quer travar BALCÃO (com acento).
+ * Qualquer variação "balcao/balcão" vira "BALCÃO".
+ * Se vier vazio, vira null.
+ */
+function normalizePlatform(v: any): string | null {
+  const raw = String(v ?? "").trim();
+  if (!raw) return null;
+
+  const up = raw
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // tira acentos só pra comparar
+    .toUpperCase();
+
+  // único ajuste que você pediu:
+  if (up.includes("BALCAO")) return "BALCÃO";
+
+  // mantém o resto como veio (sem mexer)
+  return raw;
+}
+
+/**
  * ✅ CORREÇÃO DO ERRO "payment_method_check"
- * O teu PDV manda "DÉBITO", "CRÉDITO", "ONLINE" etc.
- * O banco provavelmente aceita só os CANÔNICOS abaixo.
- *
- * Se não reconhecer, retorna null (melhor que quebrar insert).
+ * Mapeia o que o PDV manda para o que o banco aceita.
+ * Se não reconhecer, retorna null (não quebra insert).
  */
 function normalizePaymentMethod(v: any): string | null {
   const raw = String(v ?? "").trim();
@@ -86,21 +105,20 @@ function normalizePaymentMethod(v: any): string | null {
     .replace(/[\u0300-\u036f]/g, "") // tira acentos
     .toUpperCase();
 
-  // já canônicos (com/sem acento)
+  // já canônicos
   if (up === "DINHEIRO") return "DINHEIRO";
   if (up === "PIX") return "PIX";
-  if (up === "CARTAO DE DEBITO" || up === "CARTÃO DE DÉBITO") return "CARTÃO DE DÉBITO";
-  if (up === "CARTAO DE CREDITO" || up === "CARTÃO DE CRÉDITO") return "CARTÃO DE CRÉDITO";
+  if (up === "CARTAO DE DEBITO") return "CARTÃO DE DÉBITO";
+  if (up === "CARTAO DE CREDITO") return "CARTÃO DE CRÉDITO";
   if (up === "PAGAMENTO ONLINE") return "PAGAMENTO ONLINE";
 
-  // mapeia botões curtos do PDV
+  // botões curtos do PDV
   if (up.includes("DIN")) return "DINHEIRO";
   if (up.includes("PIX")) return "PIX";
   if (up.includes("DEB")) return "CARTÃO DE DÉBITO";
   if (up.includes("CRED")) return "CARTÃO DE CRÉDITO";
   if (up.includes("ONLINE")) return "PAGAMENTO ONLINE";
 
-  // não reconhecido -> não quebra constraint
   return null;
 }
 
@@ -184,18 +202,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "INVALID_JSON" }, { status: 400 });
   }
 
-  const payment = normalizePaymentMethod(body?.payment_method);
-
   const payload = {
     // se não mandar, banco usa default current_date
     order_date: body?.order_date ?? undefined,
 
     customer_name: body?.customer_name ?? null,
-    platform: body?.platform ?? null,
+
+    // ✅ único ajuste de plataforma: BALCAO/BALCÃO -> BALCÃO
+    platform: normalizePlatform(body?.platform),
+
     service_type: body?.service_type ?? null,
 
-    // ✅ aqui resolve o 500 do check constraint
-    payment_method: payment,
+    // ✅ trava pagamento no padrão do banco
+    payment_method: normalizePaymentMethod(body?.payment_method),
 
     bairros: body?.bairros ?? null,
     taxa_entrega: num(body?.taxa_entrega),
@@ -216,8 +235,10 @@ export async function POST(req: Request) {
         ok: false,
         error: error.message,
         debug: {
+          sent_platform: body?.platform ?? null,
+          normalized_platform: payload.platform,
           sent_payment_method: body?.payment_method ?? null,
-          normalized_payment_method: payment,
+          normalized_payment_method: payload.payment_method,
         },
       },
       { status: 500 }
