@@ -160,8 +160,12 @@ type Props = {
   withdrawalAuthorizedBy: string;
   setWithdrawalAuthorizedBy: React.Dispatch<React.SetStateAction<string>>;
 
-  addWithdrawal: () => void;
+  // ✅ agora o ADD pode ser async (backend) ou sync (local)
+  addWithdrawal: () => void | Promise<void>;
   totalSangrias: number;
+
+  // ✅ NOVO: se passar, delete vai pro backend; senão é só visual/local
+  onDeleteWithdrawal?: (id: string) => void | Promise<void>;
 };
 
 export default function SangriasTab({
@@ -175,6 +179,7 @@ export default function SangriasTab({
   setWithdrawalAuthorizedBy,
   addWithdrawal,
   totalSangrias,
+  onDeleteWithdrawal,
 }: Props) {
   const [hoverRegCard, setHoverRegCard] = useState(false);
   const [hoverHistCard, setHoverHistCard] = useState(false);
@@ -182,9 +187,31 @@ export default function SangriasTab({
 
   const regCardGlowOn = hoverRegCard && !hoverField;
 
-  // ✅ FRONT ONLY: remove 100% local
-  const removeWithdrawal = (id: string) => {
-    setWithdrawals((prev) => prev.filter((x) => x.id !== id));
+  const [busyAdd, setBusyAdd] = useState(false);
+  const [busyDel, setBusyDel] = useState<string | null>(null);
+
+  // ✅ delete: se tiver callback -> backend; senão -> local
+  const removeWithdrawal = async (id: string) => {
+    try {
+      setBusyDel(id);
+      if (onDeleteWithdrawal) {
+        await onDeleteWithdrawal(id);
+        return;
+      }
+      setWithdrawals((prev) => prev.filter((x) => x.id !== id));
+    } finally {
+      setBusyDel(null);
+    }
+  };
+
+  const onAdd = async () => {
+    if (busyAdd) return;
+    try {
+      setBusyAdd(true);
+      await addWithdrawal();
+    } finally {
+      setBusyAdd(false);
+    }
   };
 
   return (
@@ -226,11 +253,7 @@ export default function SangriasTab({
                 </div>
 
                 <FieldShell glowOn={hoverField === "motivo"}>
-                  <UiInput
-                    placeholder="Motivo da sangria"
-                    value={withdrawalReason}
-                    onChange={(e) => setWithdrawalReason(e.target.value)}
-                  />
+                  <UiInput placeholder="Motivo da sangria" value={withdrawalReason} onChange={(e) => setWithdrawalReason(e.target.value)} />
                 </FieldShell>
               </div>
 
@@ -253,10 +276,15 @@ export default function SangriasTab({
             <div className="mt-6">
               <button
                 type="button"
-                onClick={addWithdrawal}
-                className="h-[44px] inline-flex items-center gap-2 rounded-xl bg-orange-500 px-6 text-[14px] font-semibold text-white shadow-[0_12px_30px_rgba(0,0,0,0.35)] hover:bg-orange-600"
+                onClick={onAdd}
+                disabled={busyAdd}
+                className={[
+                  "h-[44px] inline-flex items-center gap-2 rounded-xl px-6 text-[14px] font-semibold text-white",
+                  "shadow-[0_12px_30px_rgba(0,0,0,0.35)]",
+                  busyAdd ? "bg-orange-500/60 cursor-not-allowed" : "bg-orange-500 hover:bg-orange-600",
+                ].join(" ")}
               >
-                <span className="opacity-90">↘</span> Adicionar Sangria
+                <span className="opacity-90">↘</span> {busyAdd ? "Salvando…" : "Adicionar Sangria"}
               </button>
             </div>
           </div>
@@ -332,6 +360,7 @@ export default function SangriasTab({
                           <div className="opacity-70 group-hover:opacity-100 transition">
                             <TrashBtn onClick={() => removeWithdrawal(w.id)} />
                           </div>
+                          {busyDel === w.id && <div className="mt-1 text-[11px] text-orange-300/70">Removendo…</div>}
                         </td>
                       </tr>
                     ))}

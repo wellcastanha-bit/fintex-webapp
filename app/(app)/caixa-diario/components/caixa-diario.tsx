@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 
 /* ==============================
@@ -21,7 +21,7 @@ export type PedidoCashRow = {
   plataforma: string;
   atendimento: string;
   pagamentoLabel: "Dinheiro" | "PIX" | "Pagamento Online" | "Cartão de Débito" | "Cartão de Crédito";
-  valor: number; // ✅ aqui vai ser SEMPRE a soma do r_final
+  valor: number; // ✅ soma do r_final
 };
 
 export type ManualCashEntry = {
@@ -48,14 +48,16 @@ function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
 
-function isoToday() {
-  const d = new Date();
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-}
+/* =========================
+   ✅ DIA OPERACIONAL (06:00)
+========================= */
+const OP_CUTOFF_HOUR = 6; // 06:00
+const TZ_OFFSET_MIN = -180; // Brasil (-03:00)
 
-/** ✅ DIA OPERACIONAL (front-only) */
 function getDiaOperacionalISO() {
-  return isoToday();
+  const now = new Date(Date.now() + TZ_OFFSET_MIN * 60_000);
+  if (now.getHours() < OP_CUTOFF_HOUR) now.setDate(now.getDate() - 1);
+  return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
 }
 
 /** ✅ parse robusto pra "R$ 85,00", "85.00", "85", "1.234,56" etc */
@@ -89,6 +91,17 @@ function toNumberSmart(v: any) {
 
 function calcTotalCounts(list: CountItem[]) {
   return list.reduce((s, it) => s + it.denomination * it.quantity, 0);
+}
+
+function normalizeCounts(list: any, fallback: CountItem[]) {
+  if (!Array.isArray(list)) return fallback;
+  const m = new Map<number, number>();
+  for (const it of list) {
+    const denom = Number(it?.denomination);
+    const qty = Number(it?.quantity);
+    if (Number.isFinite(denom) && Number.isFinite(qty) && qty >= 0) m.set(denom, qty);
+  }
+  return DENOMS.map((d) => ({ denomination: d, quantity: m.get(d) ?? 0 }));
 }
 
 /* =========================
@@ -186,42 +199,6 @@ function StatCard({
 }
 
 /* =========================
-   ✅ PERSISTÊNCIA LOCAL (front-only)
-========================= */
-type CaixaDraft = {
-  // ✅ pedidos NÃO ficam mais no draft: vem do backend (r_final)
-  manualCash: ManualCashEntry[];
-  expenses: Expense[];
-  withdrawals: Withdrawal[];
-  initialCounts: CountItem[];
-  finalCounts: CountItem[];
-};
-
-function storageKey(dateISO: string) {
-  return `fintex::caixa_diario::${dateISO}`;
-}
-
-function safeParse<T>(s: string | null): T | null {
-  if (!s) return null;
-  try {
-    return JSON.parse(s) as T;
-  } catch {
-    return null;
-  }
-}
-
-function normalizeCounts(list: any, fallback: CountItem[]) {
-  if (!Array.isArray(list)) return fallback;
-  const m = new Map<number, number>();
-  for (const it of list) {
-    const denom = Number(it?.denomination);
-    const qty = Number(it?.quantity);
-    if (Number.isFinite(denom) && Number.isFinite(qty) && qty >= 0) m.set(denom, qty);
-  }
-  return DENOMS.map((d) => ({ denomination: d, quantity: m.get(d) ?? 0 }));
-}
-
-/* =========================
    ✅ BACKEND: normaliza pagamento
 ========================= */
 function normPaymentLabel(v: any): PedidoCashRow["pagamentoLabel"] {
@@ -232,23 +209,11 @@ function normPaymentLabel(v: any): PedidoCashRow["pagamentoLabel"] {
     .replace(/[\u0300-\u036f]/g, "");
 
   if (!s) return "Dinheiro";
-
-  // dinheiro
   if (s.includes("dinheiro") || s === "cash") return "Dinheiro";
-
-  // pix
   if (s === "pix" || s.includes("pix")) return "PIX";
-
-  // online
   if (s.includes("online") || s.includes("pagamento online") || s.includes("gateway")) return "Pagamento Online";
-
-  // debito
   if (s.includes("debito") || s.includes("debit")) return "Cartão de Débito";
-
-  // credito
   if (s.includes("credito") || s.includes("credit")) return "Cartão de Crédito";
-
-  // fallback
   return "Dinheiro";
 }
 
@@ -262,89 +227,161 @@ function parseDateAndTimeFromISO(iso: any) {
   return { date, time };
 }
 
+/* =========================
+   ✅ API Caixa Diário (backend)
+========================= */
+type CashEntryRow = {
+  id: string;
+  op_date: string;
+  type: "manual_in" | "expense" | "withdrawal";
+  category: string | null;
+  description: string;
+  amount: number;
+  occurred_at: string;
+  created_at: string;
+};
+
+type CashSessionRow = {
+  id: string;
+  op_date: string;
+  initial_counts: any;
+  final_counts: any;
+  created_at: string;
+  updated_at: string;
+};
+
+function timeFromOccurredAt(iso: string) {
+  const d = new Date(String(iso || ""));
+  if (!Number.isFinite(d.getTime())) return "00:00";
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
 export default function CaixaDiario() {
-  // ✅ 170px como tu pediu (pra caber 7 cards na linha)
   const STAT_W = 170;
 
   const [tab, setTab] = useState<TabKey>("entradas");
 
-  // ✅ dia operacional (ISO)
-  const [dateISO] = useState<string>(() => getDiaOperacionalISO());
+  // ✅ dia operacional (vira às 06:00)
+  const [dateISO, setDateISO] = useState<string>(() => getDiaOperacionalISO());
+
+  useEffect(() => {
+    const t = setInterval(() => {
+      const next = getDiaOperacionalISO();
+      setDateISO((cur) => (cur === next ? cur : next));
+    }, 30_000);
+    return () => clearInterval(t);
+  }, []);
 
   // ✅ Pedidos (BACKEND) — soma por pagamento usando r_final
   const [pedidosAll, setPedidosAll] = useState<PedidoCashRow[]>([]);
   const [pedidosStatus, setPedidosStatus] = useState<"idle" | "ok" | "err">("idle");
 
-  // Entradas manuais (LOCAL) ✅
+  // ✅ Caixa (BACKEND) — lançamentos e contagens
+  const [caixaStatus, setCaixaStatus] = useState<"idle" | "ok" | "err">("idle");
+
   const [manualCash, setManualCash] = useState<ManualCashEntry[]>([]);
   const [manualAmount, setManualAmount] = useState("");
   const [manualDesc, setManualDesc] = useState("");
 
-  // Despesas (LOCAL) ✅
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [expenseCategory, setExpenseCategory] = useState("");
   const [expenseAmount, setExpenseAmount] = useState("");
   const [expenseDescription, setExpenseDescription] = useState("");
 
-  // Sangrias (LOCAL) ✅
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
   const [withdrawalAmount, setWithdrawalAmount] = useState("");
   const [withdrawalReason, setWithdrawalReason] = useState("");
   const [withdrawalAuthorizedBy, setWithdrawalAuthorizedBy] = useState("");
 
-  // Contadores (LOCAL) ✅
   const [initialCounts, setInitialCounts] = useState<CountItem[]>(DENOMS.map((d) => ({ denomination: d, quantity: 0 })));
   const [finalCounts, setFinalCounts] = useState<CountItem[]>(DENOMS.map((d) => ({ denomination: d, quantity: 0 })));
 
-  // ✅ trava autosave até terminar o load
-  const [draftReady, setDraftReady] = useState(false);
-
   /* =========================================
-     ✅ 0) CARREGA RASCUNHO DO DIA (localStorage)
-        (SEM pedidos: pedidos vêm do backend)
+     ✅ 0) CARREGA CAIXA DO BACKEND (sessão + entries)
+     - multi-dispositivo
   ========================================= */
   useEffect(() => {
-    try {
-      const key = storageKey(dateISO);
-      const raw = localStorage.getItem(key);
-      const saved = safeParse<CaixaDraft>(raw);
+    let alive = true;
 
-      if (saved) {
-        setManualCash(Array.isArray(saved.manualCash) ? saved.manualCash : []);
-        setExpenses(Array.isArray(saved.expenses) ? saved.expenses : []);
-        setWithdrawals(Array.isArray(saved.withdrawals) ? saved.withdrawals : []);
-        setInitialCounts(normalizeCounts(saved.initialCounts, DENOMS.map((d) => ({ denomination: d, quantity: 0 }))));
-        setFinalCounts(normalizeCounts(saved.finalCounts, DENOMS.map((d) => ({ denomination: d, quantity: 0 }))));
+    async function loadCaixa() {
+      setCaixaStatus("idle");
+      try {
+        const res = await fetch(`/api/caixa-diario?date=${encodeURIComponent(dateISO)}`, {
+          method: "GET",
+          cache: "no-store",
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const data = await res.json();
+        const session: CashSessionRow | null = data?.session || null;
+        const entries: CashEntryRow[] = Array.isArray(data?.entries) ? data.entries : [];
+
+        if (!alive) return;
+
+        // contagens
+        const init = normalizeCounts(session?.initial_counts, DENOMS.map((d) => ({ denomination: d, quantity: 0 })));
+        const fin = normalizeCounts(session?.final_counts, DENOMS.map((d) => ({ denomination: d, quantity: 0 })));
+        setInitialCounts(init);
+        setFinalCounts(fin);
+
+        // entradas/despesas/sangrias
+        const m: ManualCashEntry[] = [];
+        const e: Expense[] = [];
+        const w: Withdrawal[] = [];
+
+        for (const it of entries) {
+          const t = timeFromOccurredAt(it.occurred_at);
+          const amt = Number(it.amount ?? 0);
+
+          if (it.type === "manual_in") {
+            m.push({
+              id: it.id,
+              date: dateISO,
+              time: t,
+              description: String(it.description || "Reforço de caixa"),
+              amount: amt,
+            });
+          } else if (it.type === "expense") {
+            e.push({
+              id: it.id,
+              date: dateISO,
+              time: t,
+              category: String(it.category || ""),
+              description: String(it.description || ""),
+              amount: amt,
+            });
+          } else if (it.type === "withdrawal") {
+            // ✅ padrão: category = authorizedBy | description = reason
+            w.push({
+              id: it.id,
+              date: dateISO,
+              time: t,
+              reason: String(it.description || ""),
+              authorizedBy: String(it.category || ""),
+              amount: amt,
+            });
+          }
+        }
+
+        setManualCash(m);
+        setExpenses(e);
+        setWithdrawals(w);
+
+        setCaixaStatus("ok");
+      } catch {
+        if (!alive) return;
+        setCaixaStatus("err");
       }
-    } catch {
-      // ignora
-    } finally {
-      setDraftReady(true);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
+    loadCaixa();
+    return () => {
+      alive = false;
+    };
   }, [dateISO]);
 
   /* =========================================
-     ✅ 0.1) SALVA RASCUNHO DO DIA (localStorage)
-        (SEM pedidos: pedidos vêm do backend)
-  ========================================= */
-  useEffect(() => {
-    if (!draftReady) return;
-
-    try {
-      const key = storageKey(dateISO);
-      const draft: CaixaDraft = { manualCash, expenses, withdrawals, initialCounts, finalCounts };
-      localStorage.setItem(key, JSON.stringify(draft));
-    } catch {
-      // sem stress
-    }
-  }, [draftReady, dateISO, manualCash, expenses, withdrawals, initialCounts, finalCounts]);
-
-  /* =========================================
      ✅ 1) CARREGA PEDIDOS DO BACKEND (r_final)
-     - aqui é onde “puxa do backend”
-     - soma por pagamento é baseada em r_final
-     - NÃO exige login (só fetch)
   ========================================= */
   useEffect(() => {
     let alive = true;
@@ -352,28 +389,20 @@ export default function CaixaDiario() {
     async function loadOrders() {
       setPedidosStatus("idle");
       try {
-        // ✅ ajuste a rota caso a tua API tenha outro path:
-        // Ex.: /api/pedidos, /api/orders/list, etc.
-      const res = await fetch(`/api/orders?date=${encodeURIComponent(dateISO)}&mode=caixa`, {
-  method: "GET",
-  cache: "no-store",
-});
-
+        const res = await fetch(`/api/orders?date=${encodeURIComponent(dateISO)}&mode=caixa`, {
+          method: "GET",
+          cache: "no-store",
+        });
 
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
         const data = await res.json();
-
-        // ✅ aceita array direto ou {items: []}
         const arr: any[] = Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : [];
 
         const mapped: PedidoCashRow[] = arr.map((row: any) => {
           const id = String(row?.id ?? row?.uuid ?? row?.order_id ?? `${Date.now()}_${Math.random().toString(16).slice(2)}`);
-
           const created = row?.created_at ?? row?.order_date ?? row?.date ?? row?.createdAt;
           const { date, time } = parseDateAndTimeFromISO(created);
-
-          // ✅ r_final é o que manda
           const valor = toNumberSmart(row?.r_final ?? row?.valor ?? row?.amount ?? 0);
 
           return {
@@ -404,7 +433,7 @@ export default function CaixaDiario() {
     };
   }, [dateISO]);
 
-  // ✅ totais por forma (PEDIDOS) — agora é BACKEND via r_final
+  // ✅ totais por forma (PEDIDOS)
   const totalsByPay = useMemo(() => {
     const base = { dinheiro: 0, pix: 0, online: 0, debito: 0, credito: 0, total: 0 };
     for (const p of pedidosAll) {
@@ -421,18 +450,16 @@ export default function CaixaDiario() {
 
   const pedidosDinheiro = useMemo(() => pedidosAll.filter((p) => p.pagamentoLabel === "Dinheiro"), [pedidosAll]);
 
-  // ✅ ENTRADA TOTAL DINHEIRO = pedidos dinheiro + reforços locais
+  // ✅ ENTRADA TOTAL DINHEIRO = pedidos dinheiro + reforços (BACKEND)
   const manualCashTotal = useMemo(() => manualCash.reduce((s, m) => s + (m.amount ?? 0), 0), [manualCash]);
   const cashInTotal = totalsByPay.dinheiro + manualCashTotal;
 
   const totalDespesas = useMemo(() => expenses.reduce((s, e) => s + (e.amount ?? 0), 0), [expenses]);
   const totalSangrias = useMemo(() => withdrawals.reduce((s, w) => s + (w.amount ?? 0), 0), [withdrawals]);
 
-  // ✅ caixa inicial/final vêm dos contadores
   const caixaInicial = useMemo(() => calcTotalCounts(initialCounts), [initialCounts]);
   const caixaFinal = useMemo(() => calcTotalCounts(finalCounts), [finalCounts]);
 
-  // ✅ LÓGICA CERTA
   const esperado = useMemo(() => caixaInicial + cashInTotal - totalDespesas - totalSangrias, [
     caixaInicial,
     cashInTotal,
@@ -440,90 +467,203 @@ export default function CaixaDiario() {
     totalSangrias,
   ]);
 
-  // ✅ Diferença = Esperado - Caixa final
   const diferenca = useMemo(() => esperado - caixaFinal, [esperado, caixaFinal]);
-
   const difIsBad = Math.abs(diferenca) > 5;
 
   /* =========================
-     ✅ Entradas manuais (LOCAL)
+     ✅ Helpers API (POST/PATCH)
   ========================= */
-  const addManualCash = () => {
+  async function createEntry(payload: {
+    type: "manual_in" | "expense" | "withdrawal";
+    amount: number;
+    category?: string | null;
+    description?: string;
+    occurred_at?: string;
+  }) {
+    const res = await fetch(`/api/caixa-diario`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({
+        dateISO,
+        type: payload.type,
+        amount: payload.amount,
+        category: payload.category ?? null,
+        description: payload.description ?? "",
+        occurred_at: payload.occurred_at,
+      }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return data?.entry as CashEntryRow;
+  }
+
+  async function saveCounts(payload: { initial_counts?: CountItem[]; final_counts?: CountItem[] }) {
+    const res = await fetch(`/api/caixa-diario`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({
+        dateISO,
+        ...(payload.initial_counts ? { initial_counts: payload.initial_counts } : {}),
+        ...(payload.final_counts ? { final_counts: payload.final_counts } : {}),
+      }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  }
+
+  /* =========================
+     ✅ Entradas manuais (BACKEND)
+  ========================= */
+  const addManualCash = async () => {
     const desc = manualDesc.trim();
     const amt = toNumberSmart(manualAmount);
     if (!amt || amt <= 0) return;
 
+    // ✅ otimista
     const now = new Date();
-    const item: ManualCashEntry = {
-      id: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
+    const optimistic: ManualCashEntry = {
+      id: `tmp_${Date.now()}_${Math.random().toString(16).slice(2)}`,
       date: dateISO,
       time: `${pad2(now.getHours())}:${pad2(now.getMinutes())}`,
       description: desc || "Reforço de caixa",
       amount: amt,
     };
-
-    setManualCash((prev) => [item, ...prev]);
+    setManualCash((prev) => [optimistic, ...prev]);
     setManualAmount("");
     setManualDesc("");
+
+    try {
+      const entry = await createEntry({
+        type: "manual_in",
+        amount: amt,
+        description: optimistic.description,
+      });
+
+      const time = timeFromOccurredAt(entry.occurred_at);
+
+      setManualCash((prev) =>
+        prev.map((m) => (m.id === optimistic.id ? { ...m, id: entry.id, time } : m))
+      );
+    } catch {
+      // volta se falhar
+      setManualCash((prev) => prev.filter((m) => m.id !== optimistic.id));
+    }
   };
 
+  // ⚠️ Sem DELETE no backend ainda: remove só da tela (se quiser eu adiciono DELETE na API e aí apaga de verdade)
   const removeManual = (id: string) => setManualCash((prev) => prev.filter((m) => m.id !== id));
 
   // ✅ pedidos são do backend: remover só “da tela”
   const removePedido = (id: string) => setPedidosAll((prev) => prev.filter((p) => p.id !== id));
 
   /* =========================
-     ✅ Despesas / Sangrias (LOCAL)
+     ✅ Despesas / Sangrias (BACKEND)
   ========================= */
-  const addExpense = () => {
+  const addExpense = async () => {
     const v = toNumberSmart(expenseAmount);
     if (!expenseCategory || !expenseDescription.trim() || !v) return;
 
     const now = new Date();
     const time = now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 
-    setExpenses((prev) => [
-      {
-        id: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
-        date: dateISO,
-        time,
-        category: expenseCategory,
-        description: expenseDescription,
-        amount: v,
-      },
-      ...prev,
-    ]);
+    const optimistic: Expense = {
+      id: `tmp_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+      date: dateISO,
+      time,
+      category: expenseCategory,
+      description: expenseDescription,
+      amount: v,
+    };
+
+    setExpenses((prev) => [optimistic, ...prev]);
     setExpenseCategory("");
     setExpenseAmount("");
     setExpenseDescription("");
+
+    try {
+      const entry = await createEntry({
+        type: "expense",
+        amount: v,
+        category: optimistic.category,
+        description: optimistic.description,
+      });
+
+      const t = timeFromOccurredAt(entry.occurred_at);
+      setExpenses((prev) => prev.map((e) => (e.id === optimistic.id ? { ...e, id: entry.id, time: t } : e)));
+    } catch {
+      setExpenses((prev) => prev.filter((e) => e.id !== optimistic.id));
+    }
   };
 
-  const addWithdrawal = () => {
+  const addWithdrawal = async () => {
     const v = toNumberSmart(withdrawalAmount);
     if (!withdrawalReason.trim() || !withdrawalAuthorizedBy.trim() || !v) return;
 
     const now = new Date();
     const time = now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 
-    setWithdrawals((prev) => [
-      {
-        id: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
-        date: dateISO,
-        time,
-        amount: v,
-        reason: withdrawalReason,
-        authorizedBy: withdrawalAuthorizedBy,
-      },
-      ...prev,
-    ]);
+    const optimistic: Withdrawal = {
+      id: `tmp_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+      date: dateISO,
+      time,
+      amount: v,
+      reason: withdrawalReason,
+      authorizedBy: withdrawalAuthorizedBy,
+    };
+
+    setWithdrawals((prev) => [optimistic, ...prev]);
     setWithdrawalAmount("");
     setWithdrawalReason("");
     setWithdrawalAuthorizedBy("");
+
+    try {
+      // ✅ padrão: category = authorizedBy | description = reason
+      const entry = await createEntry({
+        type: "withdrawal",
+        amount: v,
+        category: optimistic.authorizedBy,
+        description: optimistic.reason,
+      });
+
+      const t = timeFromOccurredAt(entry.occurred_at);
+      setWithdrawals((prev) =>
+        prev.map((w) => (w.id === optimistic.id ? { ...w, id: entry.id, time: t } : w))
+      );
+    } catch {
+      setWithdrawals((prev) => prev.filter((w) => w.id !== optimistic.id));
+    }
+  };
+
+  /* =========================
+     ✅ Contadores (BACKEND)
+     - debounce PATCH pra não spammar
+  ========================= */
+  const saveTimerRef = useRef<any>(null);
+
+  const scheduleSaveCounts = (payload: { initial?: CountItem[]; final?: CountItem[] }) => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(async () => {
+      try {
+        await saveCounts({
+          ...(payload.initial ? { initial_counts: payload.initial } : {}),
+          ...(payload.final ? { final_counts: payload.final } : {}),
+        });
+      } catch {
+        // ignora (não quebra UX). Se quiser, eu coloco um toast depois.
+      }
+    }, 650);
   };
 
   const updateCount = (which: "initial" | "final", denom: number, qty: number) => {
     const setter = which === "initial" ? setInitialCounts : setFinalCounts;
-    setter((prev) => prev.map((it) => (it.denomination === denom ? { ...it, quantity: qty } : it)));
+
+    setter((prev) => {
+      const next = prev.map((it) => (it.denomination === denom ? { ...it, quantity: qty } : it));
+      scheduleSaveCounts(which === "initial" ? { initial: next } : { final: next });
+      return next;
+    });
   };
 
   const TabBar = () => {
@@ -561,22 +701,20 @@ export default function CaixaDiario() {
   };
 
   return (
-    // ✅ SEM padding externo / SEM background externo
-    // (Topbar/Sidebar/40px é controlado pelo Shell global)
     <div className="w-full min-w-0 text-white">
-      {/* ✅ REMOVE mx-auto / max-w: isso que “afastava” da sidebar */}
       <div className="w-full min-w-0">
         {/* Header */}
         <div className="mb-8">
           <div className="text-[34px] font-extrabold leading-none">Caixa Diário</div>
 
           {pedidosStatus === "idle" && <div className="mt-3 text-[13px] text-slate-200/70">Carregando pedidos…</div>}
-          {pedidosStatus === "err" && (
-            <div className="mt-3 text-[13px] text-red-300/80">Falha ao puxar pedidos do backend.</div>
-          )}
+          {pedidosStatus === "err" && <div className="mt-3 text-[13px] text-red-300/80">Falha ao puxar pedidos do backend.</div>}
+
+          {caixaStatus === "idle" && <div className="mt-2 text-[13px] text-slate-200/60">Carregando caixa…</div>}
+          {caixaStatus === "err" && <div className="mt-2 text-[13px] text-red-300/70">Falha ao puxar o Caixa Diário.</div>}
         </div>
 
-        {/* ✅ Stats (1 linha) */}
+        {/* Stats */}
         <div className="w-full overflow-x-auto pb-1">
           <div style={{ display: "flex", gap: 16, flexWrap: "nowrap", minWidth: "max-content" }}>
             <div style={{ width: STAT_W, flex: `0 0 ${STAT_W}px` }}>
@@ -604,11 +742,7 @@ export default function CaixaDiario() {
             </div>
 
             <div style={{ width: STAT_W, flex: `0 0 ${STAT_W}px` }}>
-              <StatCard
-                label="Diferença:"
-                value={(diferenca >= 0 ? "+" : "") + brl(diferenca)}
-                color={difIsBad ? "red" : "emerald"}
-              />
+              <StatCard label="Diferença:" value={(diferenca >= 0 ? "+" : "") + brl(diferenca)} color={difIsBad ? "red" : "emerald"} />
             </div>
           </div>
         </div>

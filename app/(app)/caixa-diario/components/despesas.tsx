@@ -16,9 +16,9 @@ function TrashIcon({ className = "" }: { className?: string }) {
 }
 
 /* =========================
-   ✅ FRONT/UI ONLY
-   - sem fetch, sem /api, sem backend
-   ✅ FORMATAÇÃO IGUAL Cliente.tsx / EntradasTab
+   ✅ UI (sem fetch aqui)
+   - backend está no PAI via addExpense
+   - deletar: chama callback onDeleteExpense (pai decide)
 ========================= */
 
 const AQUA = "rgba(79,220,255,0.45)";
@@ -212,6 +212,15 @@ function brl(n: number) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(n);
 }
 
+// ✅ map do label (pra histórico ficar bonito)
+const CATEGORY_LABEL: Record<string, string> = {
+  operacional: "Mão de Obra",
+  logistica: "Logística",
+  insumos: "Insumos",
+  marketing: "Marketing",
+  variaveis: "Variáveis",
+};
+
 type Props = {
   expenses: Expense[];
   setExpenses: React.Dispatch<React.SetStateAction<Expense[]>>;
@@ -227,6 +236,9 @@ type Props = {
 
   addExpense: () => void;
   totalDespesas: number;
+
+  // ✅ NOVO: se o pai passar, apaga de verdade; se não passar, apaga só visual
+  onDeleteExpense?: (id: string) => void;
 };
 
 export default function DespesasTab({
@@ -240,6 +252,7 @@ export default function DespesasTab({
   setExpenseDescription,
   addExpense,
   totalDespesas,
+  onDeleteExpense,
 }: Props) {
   const [hoverRegCard, setHoverRegCard] = useState(false);
   const [hoverHistCard, setHoverHistCard] = useState(false);
@@ -251,18 +264,12 @@ export default function DespesasTab({
 
   useMemo(() => {
     // mantém o useMemo (não quebra), mesmo que tu não use label aqui
-    const map: Record<string, string> = {
-      operacional: "Mão de Obra",
-      logistica: "Logística",
-      insumos: "Insumos",
-      marketing: "Marketing",
-      variaveis: "Variáveis",
-    };
-    return map[expenseCategory] ?? "";
+    return CATEGORY_LABEL[expenseCategory] ?? "";
   }, [expenseCategory]);
 
-  // ✅ FRONT-ONLY: remove só visualmente
+  // remove: se tiver callback, chama; senão remove só visual
   const removeExpense = (id: string) => {
+    if (onDeleteExpense) return onDeleteExpense(id);
     setExpenses((prev) => prev.filter((x) => x.id !== id));
   };
 
@@ -336,7 +343,12 @@ export default function DespesasTab({
                 </div>
 
                 <FieldShell glowOn={hoverField === "valor"}>
-                  <UiInput placeholder="0,00" value={expenseAmount} onChange={(e) => setExpenseAmount(e.target.value)} inputMode="decimal" />
+                  <UiInput
+                    placeholder="0,00"
+                    value={expenseAmount}
+                    onChange={(e) => setExpenseAmount(e.target.value)}
+                    inputMode="decimal"
+                  />
                 </FieldShell>
               </div>
 
@@ -393,56 +405,60 @@ export default function DespesasTab({
                   </thead>
 
                   <tbody>
-                    {expenses.map((e) => (
-                      <tr
-                        key={e.id}
-                        className="
-                          border-b border-white/5
-                          transition-all duration-150
-                          hover:bg-white/[0.02]
-                          hover:shadow-[inset_0_0_0_1px_rgba(79,220,255,0.10)]
-                          group
-                        "
-                      >
-                        <td className="py-3 text-slate-300 transition-colors duration-150 group-hover:text-white">{e.date}</td>
-                        <td className="py-3 text-slate-300 transition-colors duration-150 group-hover:text-white">{e.time}</td>
+                    {expenses.map((e) => {
+                      const catLabel = CATEGORY_LABEL[e.category] ?? e.category;
 
-                        <td className="py-3">
-                          <span
+                      return (
+                        <tr
+                          key={e.id}
+                          className="
+                            border-b border-white/5
+                            transition-all duration-150
+                            hover:bg-white/[0.02]
+                            hover:shadow-[inset_0_0_0_1px_rgba(79,220,255,0.10)]
+                            group
+                          "
+                        >
+                          <td className="py-3 text-slate-300 transition-colors duration-150 group-hover:text-white">{e.date}</td>
+                          <td className="py-3 text-slate-300 transition-colors duration-150 group-hover:text-white">{e.time}</td>
+
+                          <td className="py-3">
+                            <span
+                              className="
+                                rounded-lg px-3 py-1
+                                bg-red-500/15 text-red-300
+                                transition-all duration-150
+                                group-hover:text-red-200
+                                group-hover:drop-shadow-[0_0_7px_rgba(239,68,68,0.45)]
+                              "
+                            >
+                              {catLabel}
+                            </span>
+                          </td>
+
+                          <td className="py-3 text-slate-300 transition-colors duration-150 group-hover:text-white">
+                            {e.description}
+                          </td>
+
+                          <td
                             className="
-                              rounded-lg px-3 py-1
-                              bg-red-500/15 text-red-300
+                              py-3 text-right font-semibold text-red-300
                               transition-all duration-150
                               group-hover:text-red-200
                               group-hover:drop-shadow-[0_0_7px_rgba(239,68,68,0.45)]
                             "
                           >
-                            {e.category}
-                          </span>
-                        </td>
+                            {brl(e.amount)}
+                          </td>
 
-                        <td className="py-3 text-slate-300 transition-colors duration-150 group-hover:text-white">
-                          {e.description}
-                        </td>
-
-                        <td
-                          className="
-                            py-3 text-right font-semibold text-red-300
-                            transition-all duration-150
-                            group-hover:text-red-200
-                            group-hover:drop-shadow-[0_0_7px_rgba(239,68,68,0.45)]
-                          "
-                        >
-                          {brl(e.amount)}
-                        </td>
-
-                        <td className="py-2 text-right">
-                          <div className="opacity-70 group-hover:opacity-100 transition">
-                            <DeleteBtn onClick={() => removeExpense(e.id)} />
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                          <td className="py-2 text-right">
+                            <div className="opacity-70 group-hover:opacity-100 transition">
+                              <DeleteBtn onClick={() => removeExpense(e.id)} />
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

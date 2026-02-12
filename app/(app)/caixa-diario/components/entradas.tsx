@@ -206,9 +206,9 @@ function StatPill({ value }: { value: string }) {
 }
 
 export default function EntradasTab(props: {
-  // front-only: pedidos vêm do PAI (CaixaDiario)
+  // pedidos vêm do PAI (CaixaDiario)
   pedidosAll: PedidoCashRow[];
-  pedidosStatus?: "idle" | "ok"; // compatível com teu CaixaDiario atual
+  pedidosStatus?: "idle" | "ok";
 
   manualCash: ManualCashEntry[];
   manualDesc: string;
@@ -222,6 +222,9 @@ export default function EntradasTab(props: {
 
   // UI-only: remove do estado do pai (não apaga em backend)
   removePedido?: (id: string) => void;
+
+  // ✅ NOVO: se o pai passar, apaga manual de verdade (backend); senão apaga só no estado
+  onDeleteManual?: (id: string) => void;
 }) {
   const {
     pedidosAll,
@@ -234,17 +237,19 @@ export default function EntradasTab(props: {
     addManualCash,
     removeManual,
     removePedido,
+    onDeleteManual,
   } = props;
 
   const totalsByPay = useMemo(() => {
     const base = { dinheiro: 0, pix: 0, online: 0, debito: 0, credito: 0, total: 0 };
     for (const p of pedidosAll) {
-      base.total += p.valor || 0;
-      if (p.pagamentoLabel === "Dinheiro") base.dinheiro += p.valor || 0;
-      else if (p.pagamentoLabel === "PIX") base.pix += p.valor || 0;
-      else if (p.pagamentoLabel === "Pagamento Online") base.online += p.valor || 0;
-      else if (p.pagamentoLabel === "Cartão de Débito") base.debito += p.valor || 0;
-      else if (p.pagamentoLabel === "Cartão de Crédito") base.credito += p.valor || 0;
+      const v = p.valor ?? 0;
+      base.total += v;
+      if (p.pagamentoLabel === "Dinheiro") base.dinheiro += v;
+      else if (p.pagamentoLabel === "PIX") base.pix += v;
+      else if (p.pagamentoLabel === "Pagamento Online") base.online += v;
+      else if (p.pagamentoLabel === "Cartão de Débito") base.debito += v;
+      else if (p.pagamentoLabel === "Cartão de Crédito") base.credito += v;
     }
     return base;
   }, [pedidosAll]);
@@ -259,17 +264,20 @@ export default function EntradasTab(props: {
 
   const regCardGlowOn = hoverRegCard && !hoverRegField;
 
-  // ✅ total dinheiro = pedidos dinheiro + reforços locais
+  // total dinheiro = pedidos dinheiro + reforços
   const manualCashTotal = useMemo(() => manualCash.reduce((s, m) => s + (m.amount ?? 0), 0), [manualCash]);
 
-  const pedidosDinheiroTotal = useMemo(
-    () => pedidosDinheiro.reduce((s, p) => s + (p.valor ?? 0), 0),
-    [pedidosDinheiro]
-  );
+  const pedidosDinheiroTotal = useMemo(() => pedidosDinheiro.reduce((s, p) => s + (p.valor ?? 0), 0), [pedidosDinheiro]);
 
   const cashInTotal = pedidosDinheiroTotal + manualCashTotal;
 
-  // ✅ lista unificada (manual + pedidos) ordenada por data/hora (desc)
+  // delete manual: se tiver callback, usa; senão usa o removeManual antigo
+  const delManual = (id: string) => {
+    if (onDeleteManual) return onDeleteManual(id);
+    return removeManual(id);
+  };
+
+  // lista unificada (manual + pedidos) ordenada por data/hora (desc)
   const rowsMerged = useMemo(() => {
     const man = manualCash.map((m) => ({
       k: `M-${m.id}`,
@@ -278,7 +286,7 @@ export default function EntradasTab(props: {
       time: m.time,
       desc: m.description || "Reforço de caixa",
       valor: m.amount ?? 0,
-      del: () => removeManual(m.id),
+      del: () => delManual(m.id),
     }));
 
     const ped = pedidosDinheiro.map((p) => ({
@@ -305,7 +313,7 @@ export default function EntradasTab(props: {
     });
 
     return all;
-  }, [manualCash, pedidosDinheiro, removeManual, removePedido]);
+  }, [manualCash, pedidosDinheiro, removePedido]); // delManual já é estável (depende só de props)
 
   const onAddManual = () => {
     const amt = toNumberSmart(manualAmount);
@@ -345,7 +353,7 @@ export default function EntradasTab(props: {
               ))}
             </div>
 
-            {pedidosStatus === "idle" && <div className="mt-5 text-[13px] text-slate-300/60">Pedidos: (front-only)</div>}
+            {pedidosStatus === "idle" && <div className="mt-5 text-[13px] text-slate-300/60">Carregando pedidos…</div>}
           </div>
         </CardShell>
       </div>
@@ -369,11 +377,7 @@ export default function EntradasTab(props: {
                 </div>
 
                 <FieldShell glowOn={hoverRegField === "desc"}>
-                  <UiInput
-                    placeholder="Ex: Reforço de caixa"
-                    value={manualDesc}
-                    onChange={(e) => setManualDesc(e.target.value)}
-                  />
+                  <UiInput placeholder="Ex: Reforço de caixa" value={manualDesc} onChange={(e) => setManualDesc(e.target.value)} />
                 </FieldShell>
               </div>
 
@@ -401,7 +405,7 @@ export default function EntradasTab(props: {
         </CardShell>
       </div>
 
-      {/* Histórico Dinheiro (PEDIDOS + manual local) */}
+      {/* Histórico Dinheiro (PEDIDOS + manual) */}
       <div onMouseEnter={() => setHoverHist(true)} onMouseLeave={() => setHoverHist(false)}>
         <CardShell cardGlowOn={hoverHist}>
           <div className="p-8">
@@ -438,18 +442,10 @@ export default function EntradasTab(props: {
                           group
                         "
                       >
-                        <td className="py-3 text-slate-300 transition-colors duration-150 group-hover:text-white">
-                          {r.origem}
-                        </td>
-                        <td className="py-3 text-slate-300 transition-colors duration-150 group-hover:text-white">
-                          {r.date}
-                        </td>
-                        <td className="py-3 text-slate-300 transition-colors duration-150 group-hover:text-white">
-                          {r.time}
-                        </td>
-                        <td className="py-3 text-slate-300 transition-colors duration-150 group-hover:text-white">
-                          {r.desc}
-                        </td>
+                        <td className="py-3 text-slate-300 transition-colors duration-150 group-hover:text-white">{r.origem}</td>
+                        <td className="py-3 text-slate-300 transition-colors duration-150 group-hover:text-white">{r.date}</td>
+                        <td className="py-3 text-slate-300 transition-colors duration-150 group-hover:text-white">{r.time}</td>
+                        <td className="py-3 text-slate-300 transition-colors duration-150 group-hover:text-white">{r.desc}</td>
 
                         <td
                           className="

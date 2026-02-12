@@ -4,8 +4,9 @@ import React, { useState } from "react";
 import type { CountItem } from "./caixa-diario";
 
 /* =========================
-   ✅ FRONT/UI ONLY
+   ✅ FRONT/UI ONLY (permanece assim)
    - sem fetch, sem /api, sem backend
+   - (backend já tá no CaixaDiario.tsx via updateCount)
    - card glow externo no hover
    - field glow interno quando hover no campo
    - começa fechado (compacto)
@@ -216,9 +217,7 @@ function ContadorCard({
           >
             <div>
               <div className="text-[18px] font-semibold">{title}</div>
-              <div className="mt-1 text-[12px] text-slate-300/60">
-                {openExternal ? "Clique para minimizar" : "Clique para abrir"}
-              </div>
+              <div className="mt-1 text-[12px] text-slate-300/60">{openExternal ? "Clique para minimizar" : "Clique para abrir"}</div>
             </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -266,6 +265,7 @@ function ContadorCard({
             <div className="mt-2 space-y-3">
               {counts.map((it) => {
                 const key = `${which}-${it.denomination}`;
+
                 return (
                   <div key={String(it.denomination)} className="flex items-center gap-4">
                     <div className="w-[90px] text-[14px] font-semibold text-slate-200/90">
@@ -277,9 +277,13 @@ function ContadorCard({
                         <UiInput
                           placeholder="0"
                           value={it.quantity ? String(it.quantity) : ""}
-                          onChange={(e) =>
-                            updateCount(which, it.denomination, parseInt(e.target.value || "0", 10) || 0)
-                          }
+                          onChange={(e) => {
+                            // ✅ robusto: não deixa NaN e não deixa negativo
+                            const raw = e.target.value;
+                            const n = parseInt(raw || "0", 10);
+                            const qty = Number.isFinite(n) ? Math.max(0, n) : 0;
+                            updateCount(which, it.denomination, qty);
+                          }}
                           inputMode="numeric"
                         />
                       </FieldShell>
@@ -293,9 +297,7 @@ function ContadorCard({
               })}
 
               <div className="mt-6 pt-6 border-t border-white/10 flex items-center justify-between">
-                <div className="text-[14px] font-semibold text-slate-200/90">
-                  {which === "initial" ? "Total Inicial:" : "Total Final:"}
-                </div>
+                <div className="text-[14px] font-semibold text-slate-200/90">{which === "initial" ? "Total Inicial:" : "Total Final:"}</div>
                 <div className="text-[26px] font-bold" style={{ color: totalColor }}>
                   {brl(total)}
                 </div>
