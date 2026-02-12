@@ -71,9 +71,8 @@ function currentOperationalAnchorISO() {
 }
 
 /**
- * ✅ PLATFORM: você quer travar BALCÃO (com acento).
+ * ✅ PLATFORM: travar BALCÃO (com acento).
  * Qualquer variação "balcao/balcão" vira "BALCÃO".
- * Se vier vazio, vira null.
  */
 function normalizePlatform(v: any): string | null {
   const raw = String(v ?? "").trim();
@@ -84,10 +83,24 @@ function normalizePlatform(v: any): string | null {
     .replace(/[\u0300-\u036f]/g, "") // tira acentos só pra comparar
     .toUpperCase();
 
-  // único ajuste que você pediu:
   if (up.includes("BALCAO")) return "BALCÃO";
+  return raw;
+}
 
-  // mantém o resto como veio (sem mexer)
+/**
+ * ✅ ATENDIMENTO: você quer somente "MESAS"
+ * Qualquer variação "mesa/mesas" vira "MESAS".
+ */
+function normalizeServiceType(v: any): string | null {
+  const raw = String(v ?? "").trim();
+  if (!raw) return null;
+
+  const up = raw
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase();
+
+  if (up === "MESA" || up === "MESAS" || up.includes("MESA")) return "MESAS";
   return raw;
 }
 
@@ -102,17 +115,15 @@ function normalizePaymentMethod(v: any): string | null {
 
   const up = raw
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "") // tira acentos
+    .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase();
 
-  // já canônicos
   if (up === "DINHEIRO") return "DINHEIRO";
   if (up === "PIX") return "PIX";
   if (up === "CARTAO DE DEBITO") return "CARTÃO DE DÉBITO";
   if (up === "CARTAO DE CREDITO") return "CARTÃO DE CRÉDITO";
   if (up === "PAGAMENTO ONLINE") return "PAGAMENTO ONLINE";
 
-  // botões curtos do PDV
   if (up.includes("DIN")) return "DINHEIRO";
   if (up.includes("PIX")) return "PIX";
   if (up.includes("DEB")) return "CARTÃO DE DÉBITO";
@@ -124,10 +135,6 @@ function normalizePaymentMethod(v: any): string | null {
 
 /* =========================
    GET
-   - padrão: { ok, rows } (PedidosClient)
-   - mode=caixa: { ok, items } (Caixa Diário)
-   - ?date=YYYY-MM-DD => ancora do dia operacional
-   - sem date => dia operacional de agora
 ========================= */
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -145,7 +152,6 @@ export async function GET(req: Request) {
     )
     .order("created_at", { ascending: false });
 
-  // ✅ filtro DIA OPERACIONAL (created_at) em UTC
   q = q.gte("created_at", startISO).lt("created_at", endISO);
 
   const { data, error } = await q;
@@ -203,17 +209,16 @@ export async function POST(req: Request) {
   }
 
   const payload = {
-    // se não mandar, banco usa default current_date
     order_date: body?.order_date ?? undefined,
-
     customer_name: body?.customer_name ?? null,
 
-    // ✅ único ajuste de plataforma: BALCAO/BALCÃO -> BALCÃO
+    // ✅ BALCAO/BALCÃO -> BALCÃO
     platform: normalizePlatform(body?.platform),
 
-    service_type: body?.service_type ?? null,
+    // ✅ MESA/MESAS -> MESAS
+    service_type: normalizeServiceType(body?.service_type),
 
-    // ✅ trava pagamento no padrão do banco
+    // ✅ pagamento no padrão do banco
     payment_method: normalizePaymentMethod(body?.payment_method),
 
     bairros: body?.bairros ?? null,
@@ -237,6 +242,8 @@ export async function POST(req: Request) {
         debug: {
           sent_platform: body?.platform ?? null,
           normalized_platform: payload.platform,
+          sent_service_type: body?.service_type ?? null,
+          normalized_service_type: payload.service_type,
           sent_payment_method: body?.payment_method ?? null,
           normalized_payment_method: payload.payment_method,
         },
@@ -250,8 +257,6 @@ export async function POST(req: Request) {
 
 /* =========================
    PATCH — editar RESPONSÁVEL e/ou STATUS
-   ✅ sem login
-   ✅ devolve row no formato do PedidosClient
 ========================= */
 export async function PATCH(req: Request) {
   let body: any;
