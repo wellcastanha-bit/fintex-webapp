@@ -32,6 +32,36 @@ type ApiDashboard = {
   error?: string;
 };
 
+// ✅ API /api/conferencia (do route.ts que te mandei)
+type ApiConferencia = {
+  ok: boolean;
+  op_date?: string; // YYYY-MM-DD
+  session?: {
+    id: string;
+    status: string;
+    opened_at: string;
+    closed_at?: string | null;
+    opening_cash: number;
+  };
+  totals?: {
+    caixa_inicial: number;
+    entradas_dinheiro: number;
+    saidas: number;
+    caixa_final: number;
+    quebra: number;
+  };
+  moves?: Array<{
+    id: string;
+    kind: string;
+    pay_method: string;
+    amount: number;
+    category?: string | null;
+    note?: string | null;
+    created_at: string;
+  }>;
+  error?: string;
+};
+
 function pickAccentPlataforma(k: string): PlataformaRow["accent"] {
   const key = (k || "").toUpperCase();
   if (key.includes("AIQ")) return "purple";
@@ -52,6 +82,54 @@ function pickAccentAtendimento(k: string): AtendimentoRow["accent"] {
 
 function normKey(s: string) {
   return (s || "").trim().toUpperCase().replace(/\s+/g, " ");
+}
+
+/**
+ * ✅ Extrai um op_date (YYYY-MM-DD) do DashboardQuery, quando fizer sentido.
+ * - "hoje": não manda op_date (API calcula pelo cutoff 06:00)
+ * - "ontem": manda a data de ontem (local)
+ * - "dia": usa q.dayISO
+ * - "period": usa o "fim" do período como op_date (se existir), senão null
+ */
+function opDateFromDashboardQuery(q: DashboardQuery): string | null {
+  try {
+    const kind = (q as any)?.kind;
+
+    // helper: hoje local -> YYYY-MM-DD
+    const toISODateLocal = (d: Date) => {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    };
+
+    if (kind === "day") {
+      const dayISO = String((q as any)?.dayISO || "").trim();
+      return dayISO || null;
+    }
+
+    if (kind === "period") {
+      const period = String((q as any)?.period || "").toLowerCase();
+
+      if (period === "hoje") return null; // deixa API decidir com cutoff 06:00
+
+      if (period === "ontem") {
+        const d = new Date();
+        d.setDate(d.getDate() - 1);
+        return toISODateLocal(d);
+      }
+
+      // se tiver datas explícitas no query (caso teu header mande)
+      const endISO = String((q as any)?.endISO || "").trim();
+      if (endISO) return endISO;
+
+      return null;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export default function DashboardView() {
@@ -132,13 +210,55 @@ export default function DashboardView() {
 
   const [loading, setLoading] = useState(false);
 
+  async function fetchConferenciaForQuery(q: DashboardQuery) {
+    try {
+      const opDate = opDateFromDashboardQuery(q);
+
+      const url = opDate ? `/api/conferencia?op_date=${encodeURIComponent(opDate)}` : `/api/conferencia`;
+      const r = await fetch(url, { cache: "no-store" });
+      const json = (await r.json()) as ApiConferencia;
+
+      if (!json?.ok) {
+        console.error("conferencia api error:", json?.error || "unknown");
+        // não explode a UI
+        setConferencia((prev) => ({ ...prev, status: "OFF" as any }));
+        return;
+      }
+
+      const t = json.totals || {
+        caixa_inicial: 0,
+        entradas_dinheiro: 0,
+        saidas: 0,
+        caixa_final: 0,
+        quebra: 0,
+      };
+
+      setConferencia({
+        status: "OK",
+        caixaInicial: Number(t.caixa_inicial ?? 0),
+        entradasDinheiro: Number(t.entradas_dinheiro ?? 0),
+        saidas: Number(t.saidas ?? 0),
+        caixaFinal: Number(t.caixa_final ?? 0),
+        quebra: Number(t.quebra ?? 0),
+      });
+    } catch (e: any) {
+      console.error("fetch conferencia failed:", e?.message || e);
+      setConferencia((prev) => ({ ...prev, status: "OFF" as any }));
+    }
+  }
+
   async function fetchDashboard(q: DashboardQuery) {
     const qs = buildDashboardQS(q);
 
     setLoading(true);
     try {
-      const r = await fetch(`/api/dashboard?${qs}`, { cache: "no-store" });
-      const json = (await r.json()) as ApiDashboard;
+      // ✅ puxa dashboard + conferencia em paralelo (mesma query)
+      const [dashRes] = await Promise.all([
+        fetch(`/api/dashboard?${qs}`, { cache: "no-store" }),
+        fetchConferenciaForQuery(q),
+      ]);
+
+      const json = (await dashRes.json()) as ApiDashboard;
 
       if (!json?.ok) {
         console.error("dashboard api error:", json?.error || "unknown");
@@ -156,12 +276,9 @@ export default function DashboardView() {
           despesas_pct: Number(json.kpis.despesas_pct ?? 0),
         });
 
-        // ✅ se ainda não temos backend de despesas detalhadas, pelo menos não deixa vazio:
-        // aqui você pode depois substituir pelo retorno real do /api/dashboard
         setDespesasDetalhadas(
           baseDespesas.map((d) => ({
             ...d,
-            // opcional: se quiser refletir a despesa total distribuída, deixa como 0 por enquanto
             pct: 0,
             valor: 0,
           }))
@@ -249,7 +366,7 @@ export default function DashboardView() {
   }
 
   useEffect(() => {
-    fetchDashboard({ kind: "period", period: "hoje" });
+    fetchDashboard({ kind: "period", period: "hoje" } as any);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

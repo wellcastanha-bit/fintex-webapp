@@ -297,6 +297,54 @@ export default function CaixaDiario() {
   const [finalCounts, setFinalCounts] = useState<CountItem[]>(DENOMS.map((d) => ({ denomination: d, quantity: 0 })));
 
   /* =========================================
+     ✅ CONEXÃO COM /api/conferencia (Dashboard)
+     - Caixa Diário vira "fonte" pro painel
+  ========================================= */
+  const lastSyncOpenCashRef = useRef<string>(""); // guarda dateISO que já sincronizou
+
+  async function conferenciaSetOpeningCash(opening_cash: number) {
+    try {
+      await fetch(`/api/conferencia`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          op_date: dateISO,
+          opening_cash,
+        }),
+      });
+    } catch {
+      // não quebra UX
+    }
+  }
+
+  async function conferenciaAddMove(payload: {
+    kind: "entrada" | "saida";
+    pay_method?: string;
+    amount: number;
+    category?: string | null;
+    note?: string | null;
+  }) {
+    try {
+      await fetch(`/api/conferencia`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          op_date: dateISO,
+          kind: payload.kind,
+          pay_method: payload.pay_method || "dinheiro",
+          amount: payload.amount,
+          category: payload.category ?? null,
+          note: payload.note ?? null,
+        }),
+      });
+    } catch {
+      // não quebra UX
+    }
+  }
+
+  /* =========================================
      ✅ 0) CARREGA CAIXA DO BACKEND (sessão + entries)
      - multi-dispositivo
   ========================================= */
@@ -368,12 +416,22 @@ export default function CaixaDiario() {
         setWithdrawals(w);
 
         setCaixaStatus("ok");
+
+        // ✅ Sincroniza Caixa Inicial pro Dashboard (uma vez por dia operacional)
+        // (Caixa Diário é a fonte. Se estiver 0, não força.)
+        const initialTotal = calcTotalCounts(init);
+        if (initialTotal > 0 && lastSyncOpenCashRef.current !== dateISO) {
+          lastSyncOpenCashRef.current = dateISO;
+          await conferenciaSetOpeningCash(initialTotal);
+        }
       } catch {
         if (!alive) return;
         setCaixaStatus("err");
       }
     }
 
+    // reseta trava a cada troca de dia
+    lastSyncOpenCashRef.current = "";
     loadCaixa();
     return () => {
       alive = false;
@@ -515,6 +573,7 @@ export default function CaixaDiario() {
 
   /* =========================
      ✅ Entradas manuais (BACKEND)
+     + envia pro /api/conferencia
   ========================= */
   const addManualCash = async () => {
     const desc = manualDesc.trim();
@@ -543,9 +602,16 @@ export default function CaixaDiario() {
 
       const time = timeFromOccurredAt(entry.occurred_at);
 
-      setManualCash((prev) =>
-        prev.map((m) => (m.id === optimistic.id ? { ...m, id: entry.id, time } : m))
-      );
+      setManualCash((prev) => prev.map((m) => (m.id === optimistic.id ? { ...m, id: entry.id, time } : m)));
+
+      // ✅ Conferência: entrada em dinheiro
+      await conferenciaAddMove({
+        kind: "entrada",
+        pay_method: "dinheiro",
+        amount: amt,
+        category: "Reforço",
+        note: optimistic.description,
+      });
     } catch {
       // volta se falhar
       setManualCash((prev) => prev.filter((m) => m.id !== optimistic.id));
@@ -560,6 +626,7 @@ export default function CaixaDiario() {
 
   /* =========================
      ✅ Despesas / Sangrias (BACKEND)
+     + envia pro /api/conferencia como SAÍDA
   ========================= */
   const addExpense = async () => {
     const v = toNumberSmart(expenseAmount);
@@ -592,6 +659,15 @@ export default function CaixaDiario() {
 
       const t = timeFromOccurredAt(entry.occurred_at);
       setExpenses((prev) => prev.map((e) => (e.id === optimistic.id ? { ...e, id: entry.id, time: t } : e)));
+
+      // ✅ Conferência: saída
+      await conferenciaAddMove({
+        kind: "saida",
+        pay_method: "dinheiro",
+        amount: v,
+        category: optimistic.category,
+        note: optimistic.description,
+      });
     } catch {
       setExpenses((prev) => prev.filter((e) => e.id !== optimistic.id));
     }
@@ -628,9 +704,16 @@ export default function CaixaDiario() {
       });
 
       const t = timeFromOccurredAt(entry.occurred_at);
-      setWithdrawals((prev) =>
-        prev.map((w) => (w.id === optimistic.id ? { ...w, id: entry.id, time: t } : w))
-      );
+      setWithdrawals((prev) => prev.map((w) => (w.id === optimistic.id ? { ...w, id: entry.id, time: t } : w)));
+
+      // ✅ Conferência: saída (sangria)
+      await conferenciaAddMove({
+        kind: "saida",
+        pay_method: "dinheiro",
+        amount: v,
+        category: "Sangria",
+        note: `Autorizado: ${optimistic.authorizedBy} · Motivo: ${optimistic.reason}`,
+      });
     } catch {
       setWithdrawals((prev) => prev.filter((w) => w.id !== optimistic.id));
     }
@@ -639,6 +722,7 @@ export default function CaixaDiario() {
   /* =========================
      ✅ Contadores (BACKEND)
      - debounce PATCH pra não spammar
+     + sincroniza Caixa Inicial no /api/conferencia
   ========================= */
   const saveTimerRef = useRef<any>(null);
 
@@ -650,6 +734,15 @@ export default function CaixaDiario() {
           ...(payload.initial ? { initial_counts: payload.initial } : {}),
           ...(payload.final ? { final_counts: payload.final } : {}),
         });
+
+        // ✅ quando atualizar contadores iniciais, empurra pro Dashboard
+        if (payload.initial) {
+          const opening_cash = calcTotalCounts(payload.initial);
+          if (opening_cash >= 0) {
+            await conferenciaSetOpeningCash(opening_cash);
+            lastSyncOpenCashRef.current = dateISO;
+          }
+        }
       } catch {
         // ignora (não quebra UX). Se quiser, eu coloco um toast depois.
       }
@@ -742,7 +835,11 @@ export default function CaixaDiario() {
             </div>
 
             <div style={{ width: STAT_W, flex: `0 0 ${STAT_W}px` }}>
-              <StatCard label="Diferença:" value={(diferenca >= 0 ? "+" : "") + brl(diferenca)} color={difIsBad ? "red" : "emerald"} />
+              <StatCard
+                label="Diferença:"
+                value={(diferenca >= 0 ? "+" : "") + brl(diferenca)}
+                color={difIsBad ? "red" : "emerald"}
+              />
             </div>
           </div>
         </div>
