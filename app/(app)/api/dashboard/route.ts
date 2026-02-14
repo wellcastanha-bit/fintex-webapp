@@ -5,10 +5,12 @@ import { createClient } from "@supabase/supabase-js";
 // =========================
 // ✅ SUPABASE (SERVER)
 // =========================
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
+  auth: { persistSession: false },
+});
 
 // =========================
 // ✅ CONFIG DIA OPERACIONAL
@@ -58,7 +60,6 @@ function localDateTimeToUtcISO(dateISO: string, hour = 0, min = 0, sec = 0, ms =
   const utcMs = Date.UTC(y, m - 1, d, hour, min, sec, ms) - TZ_OFFSET_MIN * 60_000;
   return new Date(utcMs).toISOString();
 }
-
 function getOperationalBaseDateISO(nowUtcMs: number) {
   const todayLocalISO = dateToISODateLocal(nowUtcMs);
   const hLocal = hourLocal(nowUtcMs);
@@ -66,92 +67,36 @@ function getOperationalBaseDateISO(nowUtcMs: number) {
   return todayLocalISO;
 }
 
-function firstDayOfMonthISO(iso: string) {
-  const { y, m } = parseISODate(iso);
-  return `${y}-${pad2(m)}-01`;
-}
-function firstDayNextMonthISO(iso: string) {
-  const { y, m } = parseISODate(iso);
-  const nextMonthBase = Date.UTC(y, m, 1, 12, 0, 0);
-  const nm = new Date(nextMonthBase);
-  const ny = nm.getUTCFullYear();
-  const nmm = nm.getUTCMonth() + 1;
-  return `${ny}-${pad2(nmm)}-01`;
-}
-function firstDayPrevMonthISO(iso: string) {
-  const { y, m } = parseISODate(iso);
-  const prevMonthBase = Date.UTC(y, m - 2, 1, 12, 0, 0);
-  const pm = new Date(prevMonthBase);
-  const py = pm.getUTCFullYear();
-  const pmm = pm.getUTCMonth() + 1;
-  return `${py}-${pad2(pmm)}-01`;
-}
-
 // =========================
-// ✅ resolveRange (usa params do front)
-// - period=hoje|ontem|ultimos_7|ultimos_30|esse_mes|mes_anterior
-// - date=YYYY-MM-DD
-// - start=YYYY-MM-DD&end=YYYY-MM-DD (end inclusivo)
+// ✅ resolveRange (mobile)
+// - period=hoje|ontem|7d|30d
 // =========================
 function resolveRange(params: URLSearchParams) {
-  const periodRaw = (params.get("period") || "hoje").toLowerCase();
-  const date = params.get("date");
-  const start = params.get("start");
-  const end = params.get("end");
-
+  const raw = (params.get("period") || "hoje").toLowerCase().trim();
   const now = Date.now();
   const baseOp = getOperationalBaseDateISO(now);
 
-  let startLocalISO: string;
-  let endLocalISO: string; // exclusivo
-  let label = periodRaw;
+  let startLocalISO = baseOp;
+  let endLocalISO = addDaysISO(baseOp, 1); // exclusivo
+  let label = "Hoje";
 
-  if (start && end) {
-    startLocalISO = start;
-    endLocalISO = addDaysISO(end, 1);
-    label = "intervalo";
-  } else if (date) {
-    startLocalISO = date;
-    endLocalISO = addDaysISO(date, 1);
-    label = "data";
+  if (raw === "ontem") {
+    startLocalISO = addDaysISO(baseOp, -1);
+    endLocalISO = baseOp;
+    label = "Ontem";
+  } else if (raw === "7d") {
+    startLocalISO = addDaysISO(baseOp, -6);
+    endLocalISO = addDaysISO(baseOp, 1);
+    label = "Últimos 7 dias";
+  } else if (raw === "30d") {
+    startLocalISO = addDaysISO(baseOp, -29);
+    endLocalISO = addDaysISO(baseOp, 1);
+    label = "Últimos 30 dias";
   } else {
-    if (periodRaw === "hoje") {
-      startLocalISO = baseOp;
-      endLocalISO = addDaysISO(baseOp, 1);
-      label = "hoje";
-    } else if (periodRaw === "ontem") {
-      startLocalISO = addDaysISO(baseOp, -1);
-      endLocalISO = baseOp;
-      label = "ontem";
-    } else if (periodRaw === "ultimos_7" || periodRaw === "últimos_7") {
-      startLocalISO = addDaysISO(baseOp, -6);
-      endLocalISO = addDaysISO(baseOp, 1);
-      label = "ultimos_7";
-    } else if (periodRaw === "ultimos_30" || periodRaw === "últimos_30") {
-      startLocalISO = addDaysISO(baseOp, -29);
-      endLocalISO = addDaysISO(baseOp, 1);
-      label = "ultimos_30";
-    } else if (periodRaw === "esse_mes" || periodRaw === "esse mês" || periodRaw === "mes" || periodRaw === "mês") {
-      startLocalISO = firstDayOfMonthISO(baseOp);
-      endLocalISO = addDaysISO(baseOp, 1);
-      label = "esse_mes";
-    } else if (periodRaw === "mes_anterior" || periodRaw === "mês anterior") {
-      const startPrev = firstDayPrevMonthISO(baseOp);
-      const startThis = firstDayOfMonthISO(baseOp);
-      startLocalISO = startPrev;
-      endLocalISO = startThis;
-      label = "mes_anterior";
-    } else if (periodRaw === "proximo_mes" || periodRaw === "próximo_mes") {
-      const startNext = firstDayNextMonthISO(baseOp);
-      const endNext = firstDayNextMonthISO(startNext);
-      startLocalISO = startNext;
-      endLocalISO = endNext;
-      label = "proximo_mes";
-    } else {
-      startLocalISO = baseOp;
-      endLocalISO = addDaysISO(baseOp, 1);
-      label = "hoje";
-    }
+    // hoje (default)
+    startLocalISO = baseOp;
+    endLocalISO = addDaysISO(baseOp, 1);
+    label = "Hoje";
   }
 
   const startUtcISO = localDateTimeToUtcISO(startLocalISO, OP_CUTOFF_HOUR, 0, 0, 0);
@@ -169,11 +114,43 @@ type OrderRow = {
   payment_method: string | null;
 };
 
+// normaliza texto p/ bater certinho
+function norm(s: any) {
+  return String(s || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, " ");
+}
+
+// Mapas p/ “consertar” variações comuns
+function normPlatform(v: any) {
+  const x = norm(v);
+  if (!x) return "OUTROS";
+  if (x === "BALCAO") return "BALCÃO";
+  if (x.includes("DELIVERY")) return "DELIVERY MUCH";
+  if (x.includes("WHATS")) return "WHATSAPP";
+  return x;
+}
+function normService(v: any) {
+  const x = norm(v);
+  if (!x) return "OUTROS";
+  if (x === "MESA") return "MESAS";
+  return x;
+}
+function normPay(v: any) {
+  const x = norm(v);
+  if (!x) return "OUTROS";
+  if (x === "CARTAO DE CREDITO") return "CARTÃO DE CRÉDITO";
+  if (x === "CARTAO DE DEBITO") return "CARTÃO DE DÉBITO";
+  if (x === "PAGAMENTO_ONLINE") return "PAGAMENTO ONLINE";
+  return x;
+}
+
 function groupAgg(rows: OrderRow[], key: (r: OrderRow) => string) {
   const map = new Map<string, { key: string; pedidos: number; valor: number }>();
 
   for (const r of rows) {
-    const k = (key(r) || "OUTROS").trim() || "OUTROS";
+    const k = key(r) || "OUTROS";
     const item = map.get(k) || { key: k, pedidos: 0, valor: 0 };
     item.pedidos += 1;
     item.valor += num(r.r_final);
@@ -195,16 +172,39 @@ function sumCounts(counts: any): number {
   return Number.isFinite(total) ? total : 0;
 }
 
+// ✅ monta lista fixa (sempre retorna todos, mesmo zerado)
+// pct em % (0–100)
+function fixedList(
+  labels: string[],
+  agg: { key: string; pedidos: number; valor: number }[],
+  faturamento: number
+) {
+  const map = new Map<string, { pedidos: number; valor: number }>();
+  for (const it of agg) map.set(it.key, { pedidos: it.pedidos, valor: it.valor });
+
+  return labels.map((label) => {
+    const got = map.get(label);
+    const valor = got ? got.valor : 0;
+    const pedidos = got ? got.pedidos : 0;
+    const pct = faturamento > 0 ? (valor / faturamento) * 100 : 0;
+    return { label, pedidos, valor, pct };
+  });
+}
+
 export async function GET(req: NextRequest) {
   try {
+    if (!SUPABASE_URL || !SERVICE_KEY) {
+      return NextResponse.json(
+        { ok: false, error: "Env faltando: NEXT_PUBLIC_SUPABASE_URL e/ou SUPABASE_SERVICE_ROLE_KEY" },
+        { status: 500 }
+      );
+    }
+
     const { searchParams } = new URL(req.url);
     const range = resolveRange(searchParams);
 
-    // ✅ por enquanto fixo (igual teu schema default)
-    const company_id = (searchParams.get("company_id") || "pizzablu").trim();
-
     // =========================
-    // ✅ ORDERS (faturamento etc)
+    // ✅ ORDERS
     // =========================
     const { data: orders, error: ordersError } = await supabase
       .from("orders")
@@ -224,8 +224,7 @@ export async function GET(req: NextRequest) {
     const ticket_medio = pedidos > 0 ? faturamento / pedidos : 0;
 
     // =========================
-    // ✅ CASH ENTRIES (para despesas + conferência)
-    // usamos occurred_at pra KPIs do período
+    // ✅ CASH ENTRIES (despesas do período)
     // =========================
     const { data: cashRows, error: cashError } = await supabase
       .from("cash_entries")
@@ -239,26 +238,22 @@ export async function GET(req: NextRequest) {
 
     const cash = (cashRows || []) as Array<{ type: string | null; amount: any; occurred_at: string; op_date: string }>;
 
-    // KPIs despesas (período)
     const despesas = cash
-      .filter((r) => (r.type || "").toLowerCase() === "expense")
+      .filter((r) => norm(r.type) === "EXPENSE")
       .reduce((acc, r) => acc + num(r.amount), 0);
 
-    const despesas_pct = faturamento > 0 ? despesas / faturamento : 0;
+    const despesas_pct = faturamento > 0 ? (despesas / faturamento) * 100 : 0;
 
-    // ✅ margem/lucro por enquanto: fixo 30%
-    const FIXED_MARGIN = 0.3;
-    const margem = FIXED_MARGIN;
-    const lucro_estimado = faturamento * FIXED_MARGIN;
+    // ✅ margem/lucro: em % (30)
+    const MARGEM_PCT = Number.isFinite(Number(process.env.DASHBOARD_MARGIN_PCT))
+      ? num(process.env.DASHBOARD_MARGIN_PCT)
+      : 30;
+
+    const lucro_estimado = faturamento * (MARGEM_PCT / 100);
 
     // =========================
-    // ✅ CONFERÊNCIA DE CAIXA (SÓ faz sentido p/ 1 dia)
-    // - usa cash_sessions (contagens) + cash_entries por op_date
-    // - entradasDinheiro: pedidos dinheiro (do range operacional) + manual_in do dia
-    // - saidas: expense + withdrawal do dia
+    // ✅ CONFERÊNCIA (só 1 dia)
     // =========================
-
-    // detecta se o range é exatamente 1 dia operacional
     const isOneDay = range.endLocalISO === addDaysISO(range.startLocalISO, 1);
     const op_date = isOneDay ? range.startLocalISO : null;
 
@@ -272,48 +267,38 @@ export async function GET(req: NextRequest) {
     };
 
     if (op_date) {
-      // sessão (contagens)
       const { data: session, error: sErr } = await supabase
         .from("cash_sessions")
-        .select("initial_counts, final_counts")
-        .eq("company_id", company_id)
+        .select("initial_counts, final_counts, op_date")
         .eq("op_date", op_date)
         .maybeSingle();
 
-      if (sErr) {
-        return NextResponse.json({ ok: false, error: sErr.message }, { status: 500 });
-      }
+      if (sErr) return NextResponse.json({ ok: false, error: sErr.message }, { status: 500 });
 
-      const caixaInicial = sumCounts(session?.initial_counts);
-      const caixaFinal = sumCounts(session?.final_counts);
+      const caixaInicial = sumCounts((session as any)?.initial_counts);
+      const caixaFinal = sumCounts((session as any)?.final_counts);
 
-      // entradas/saídas por op_date (não depende de timezone)
       const { data: dayCash, error: dErr } = await supabase
         .from("cash_entries")
         .select("type, amount")
-        .eq("company_id", company_id)
         .eq("op_date", op_date);
 
-      if (dErr) {
-        return NextResponse.json({ ok: false, error: dErr.message }, { status: 500 });
-      }
+      if (dErr) return NextResponse.json({ ok: false, error: dErr.message }, { status: 500 });
 
       let manual_in = 0;
       let expense = 0;
       let withdrawal = 0;
 
-      for (const r of dayCash || []) {
-        const t = String(r.type || "").toLowerCase();
-        const amt = num((r as any).amount);
-
-        if (t === "manual_in") manual_in += amt;
-        if (t === "expense") expense += amt;
-        if (t === "withdrawal") withdrawal += amt;
+      for (const r of (dayCash || []) as any[]) {
+        const t = norm(r?.type);
+        const amt = num(r?.amount);
+        if (t === "MANUAL_IN") manual_in += amt;
+        if (t === "EXPENSE") expense += amt;
+        if (t === "WITHDRAWAL") withdrawal += amt;
       }
 
-      // pedidos em dinheiro (já respeita 06:00 porque vem do range start/end)
       const pedidosDinheiro = rows
-        .filter((r) => String(r.payment_method || "").trim().toLowerCase() === "dinheiro")
+        .filter((r) => normPay(r.payment_method) === "DINHEIRO")
         .reduce((acc, r) => acc + num(r.r_final), 0);
 
       const entradasDinheiro = pedidosDinheiro + manual_in;
@@ -324,25 +309,33 @@ export async function GET(req: NextRequest) {
 
       const status: "OK" | "ATENÇÃO" = Math.abs(quebra) > 5 ? "ATENÇÃO" : "OK";
 
-      conferencia = {
-        status,
-        caixaInicial,
-        entradasDinheiro,
-        saidas,
-        caixaFinal,
-        quebra,
-      };
+      conferencia = { status, caixaInicial, entradasDinheiro, saidas, caixaFinal, quebra };
     }
 
     // =========================
-    // agrupamentos
+    // ✅ agrupamentos (dinâmicos)
     // =========================
-    const byPagamento = groupAgg(rows, (r) => (r.payment_method || "OUTROS").trim().toUpperCase());
-    const byPlataforma = groupAgg(rows, (r) => (r.platform || "OUTROS").trim().toUpperCase());
-    const byAtendimento = groupAgg(rows, (r) => (r.service_type || "OUTROS").trim().toUpperCase());
+    const byPagamentoDyn = groupAgg(rows, (r) => normPay(r.payment_method) || "OUTROS");
+    const byPlataformaDyn = groupAgg(rows, (r) => normPlatform(r.platform) || "OUTROS");
+    const byAtendimentoDyn = groupAgg(rows, (r) => normService(r.service_type) || "OUTROS");
 
-    const withPct = (arr: { key: string; pedidos: number; valor: number }[]) =>
-      arr.map((x) => ({ ...x, pct: faturamento > 0 ? x.valor / faturamento : 0 }));
+    // =========================
+    // ✅ listas FIXAS (mobile quer sempre mostrar tudo)
+    // =========================
+    const FIX_PAY = ["DINHEIRO", "PIX", "PAGAMENTO ONLINE", "CARTÃO DE CRÉDITO", "CARTÃO DE DÉBITO"];
+    const FIX_PLAT = ["AIQFOME", "BALCÃO", "WHATSAPP", "DELIVERY MUCH", "IFOOD"];
+    const FIX_ATT = ["ENTREGA", "RETIRADA", "MESAS"];
+
+    const ranking_pagamentos = fixedList(FIX_PAY, byPagamentoDyn, faturamento);
+    const pedidos_por_plataforma = fixedList(FIX_PLAT, byPlataformaDyn, faturamento);
+    const pedidos_por_atendimento = fixedList(FIX_ATT, byAtendimentoDyn, faturamento);
+
+    // (opcional) compat antigo
+    const groups = {
+      pagamentos: byPagamentoDyn.map((x) => ({ ...x, pct: faturamento > 0 ? (x.valor / faturamento) * 100 : 0 })),
+      plataformas: byPlataformaDyn.map((x) => ({ ...x, pct: faturamento > 0 ? (x.valor / faturamento) * 100 : 0 })),
+      atendimentos: byAtendimentoDyn.map((x) => ({ ...x, pct: faturamento > 0 ? (x.valor / faturamento) * 100 : 0 })),
+    };
 
     return NextResponse.json({
       ok: true,
@@ -351,17 +344,20 @@ export async function GET(req: NextRequest) {
         pedidos,
         faturamento,
         ticket_medio,
-        margem,
+        margem: MARGEM_PCT, // ✅ 30 (não 0.3)
         lucro_estimado,
         despesas,
-        despesas_pct,
+        despesas_pct, // ✅ em %
       },
       conferencia,
-      groups: {
-        pagamentos: withPct(byPagamento),
-        plataformas: withPct(byPlataforma),
-        atendimentos: withPct(byAtendimento),
-      },
+
+      // ✅ MOBILE: SEMPRE FIXO
+      ranking_pagamentos,
+      pedidos_por_plataforma,
+      pedidos_por_atendimento,
+
+      // ✅ compat
+      groups,
     });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message || "Erro desconhecido" }, { status: 500 });

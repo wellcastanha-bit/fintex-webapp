@@ -80,7 +80,7 @@ function normalizePlatform(v: any): string | null {
 
   const up = raw
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "") // tira acentos só pra comparar
+    .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase();
 
   if (up.includes("BALCAO")) return "BALCÃO";
@@ -140,7 +140,9 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
 
   const mode = searchParams.get("mode"); // "caixa" | null
-  const dateISO = searchParams.get("date"); // YYYY-MM-DD (âncora local do dia operacional)
+
+  // ✅ aceita tanto date quanto op_date (mobile usa op_date)
+  const dateISO = searchParams.get("date") || searchParams.get("op_date"); // YYYY-MM-DD
 
   const anchorISO = dateISO || currentOperationalAnchorISO();
   const { startISO, endISO } = operationalRangeUTCFromAnchor(anchorISO);
@@ -160,20 +162,30 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }
 
+  // ✅ modo caixa: manter como estava, mas também devolver aliases (compat)
   if (mode === "caixa") {
     const items = (data ?? []).map((o: any) => ({
       id: String(o.id),
       created_at: String(o.created_at),
+
       payment_method: o.payment_method ?? null,
       r_final: o.r_final ?? 0,
       customer_name: o.customer_name ?? null,
       platform: o.platform ?? null,
       service_type: o.service_type ?? null,
+
+      // aliases para UI antiga/desktop, se precisar:
+      pagamento: o.payment_method ?? null,
+      valor_final: o.r_final ?? 0,
+      cliente_nome: o.customer_name ?? null,
+      plataforma: o.platform ?? null,
+      atendimento: o.service_type ?? null,
     }));
 
     return NextResponse.json({ ok: true, items, op: { anchorISO, startISO, endISO } });
   }
 
+  // ✅ rows: AGORA devolve OS DOIS NOMES (mobile e desktop)
   const rows = (data ?? []).map((o: any) => ({
     id: String(o.id),
     created_at: String(o.created_at),
@@ -181,17 +193,29 @@ export async function GET(req: Request) {
     status: o.status ?? null,
     responsavel: o.responsavel ?? null,
 
+    // ✅ nomes "originais" (mobile quer esses)
+    customer_name: o.customer_name ?? null,
+    r_final: o.r_final ?? 0,
+
+    // ✅ nomes "legados" (desktop/UI anterior)
     cliente_nome: o.customer_name ?? null,
+    valor_final: o.r_final ?? 0,
+
+    // outros campos
+    platform: o.platform ?? null,
+    service_type: o.service_type ?? null,
+    bairros: o.bairros ?? null,
+    taxa_entrega: o.taxa_entrega ?? 0,
+    payment_method: o.payment_method ?? null,
+    r_inicial: o.r_inicial ?? 0,
+    troco: o.troco ?? 0,
+
+    // aliases "bonitinhos" que você já usava
     plataforma: o.platform ?? null,
     atendimento: o.service_type ?? null,
-
     bairro: o.bairros ?? null,
-    taxa_entrega: o.taxa_entrega ?? 0,
-
     pagamento: o.payment_method ?? null,
     valor_pago: o.r_inicial ?? 0,
-    valor_final: o.r_final ?? 0,
-    troco: o.troco ?? 0,
   }));
 
   return NextResponse.json({ ok: true, rows, op: { anchorISO, startISO, endISO } });
@@ -297,17 +321,26 @@ export async function PATCH(req: Request) {
     status: data.status ?? null,
     responsavel: data.responsavel ?? null,
 
+    // ✅ ambos nomes
+    customer_name: data.customer_name ?? null,
+    r_final: data.r_final ?? 0,
+
     cliente_nome: data.customer_name ?? null,
+    valor_final: data.r_final ?? 0,
+
+    platform: data.platform ?? null,
+    service_type: data.service_type ?? null,
+    bairros: data.bairros ?? null,
+    taxa_entrega: data.taxa_entrega ?? 0,
+    payment_method: data.payment_method ?? null,
+    r_inicial: data.r_inicial ?? 0,
+    troco: data.troco ?? 0,
+
     plataforma: data.platform ?? null,
     atendimento: data.service_type ?? null,
-
     bairro: data.bairros ?? null,
-    taxa_entrega: data.taxa_entrega ?? 0,
-
     pagamento: data.payment_method ?? null,
     valor_pago: data.r_inicial ?? 0,
-    valor_final: data.r_final ?? 0,
-    troco: data.troco ?? 0,
   };
 
   return NextResponse.json({ ok: true, row });
