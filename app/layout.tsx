@@ -1,21 +1,5 @@
 "use client";
 
-import { useEffect } from "react";
-
 export default function PWARegister() {
-  useEffect(() => {
-    if (process.env.NODE_ENV !== "production") return;
-    if (!("serviceWorker" in navigator)) return;
-
-    (async () => {
-      try {
-        const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
-        await reg.update();
-      } catch (err) {
-        console.error("[PWA] Falha ao registrar SW:", err);
-      }
-    })();
-  }, []);
-
   return null;
 }
