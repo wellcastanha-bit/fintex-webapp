@@ -32,6 +32,10 @@ function parseISODate(iso: string) {
   const [y, m, d] = iso.split("-").map((x) => Number(x));
   return { y, m, d };
 }
+function clampISO(iso: string) {
+  const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : "";
+}
 function dateToISODateLocal(msUtc: number) {
   const msLocal = msUtc + TZ_OFFSET_MIN * 60_000;
   const d = new Date(msLocal);
@@ -55,9 +59,16 @@ function addDaysISO(iso: string, days: number) {
   const day = dd.getUTCDate();
   return `${yy}-${pad2(mm)}-${pad2(day)}`;
 }
-function localDateTimeToUtcISO(dateISO: string, hour = 0, min = 0, sec = 0, ms = 0) {
+function localDateTimeToUtcISO(
+  dateISO: string,
+  hour = 0,
+  min = 0,
+  sec = 0,
+  ms = 0
+) {
   const { y, m, d } = parseISODate(dateISO);
-  const utcMs = Date.UTC(y, m - 1, d, hour, min, sec, ms) - TZ_OFFSET_MIN * 60_000;
+  const utcMs =
+    Date.UTC(y, m - 1, d, hour, min, sec, ms) - TZ_OFFSET_MIN * 60_000;
   return new Date(utcMs).toISOString();
 }
 function getOperationalBaseDateISO(nowUtcMs: number) {
@@ -66,15 +77,56 @@ function getOperationalBaseDateISO(nowUtcMs: number) {
   if (hLocal < OP_CUTOFF_HOUR) return addDaysISO(todayLocalISO, -1);
   return todayLocalISO;
 }
+function isoToBR(iso: string) {
+  const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return iso;
+  return `${m[3]}/${m[2]}/${m[1]}`;
+}
 
 // =========================
 // ✅ resolveRange (mobile)
-// - period=hoje|ontem|7d|30d
+// - aceita:
+//   1) from=YYYY-MM-DD&to=YYYY-MM-DD  (inclusive)
+//   2) period=hoje|ontem|7d|30d|este_mes|mes_anterior
 // =========================
 function resolveRange(params: URLSearchParams) {
-  const raw = (params.get("period") || "hoje").toLowerCase().trim();
   const now = Date.now();
   const baseOp = getOperationalBaseDateISO(now);
+
+  // 🔥 prioridade: range explícito (uma_data / um_periodo no front)
+  const fromQ = clampISO(params.get("from") || params.get("date_from") || "");
+  const toQ = clampISO(params.get("to") || params.get("date_to") || "");
+
+  if (fromQ && toQ) {
+    const a = fromQ <= toQ ? fromQ : toQ;
+    const b = fromQ <= toQ ? toQ : fromQ;
+
+    // endLocalISO é EXCLUSIVO (dia seguinte)
+    const startLocalISO = a;
+    const endLocalISO = addDaysISO(b, 1);
+
+    const startUtcISO = localDateTimeToUtcISO(
+      startLocalISO,
+      OP_CUTOFF_HOUR,
+      0,
+      0,
+      0
+    );
+    const endUtcISO = localDateTimeToUtcISO(
+      endLocalISO,
+      OP_CUTOFF_HOUR,
+      0,
+      0,
+      0
+    );
+
+    const label = `${isoToBR(a)} - ${isoToBR(b)}`;
+
+    return { label, startLocalISO, endLocalISO, startUtcISO, endUtcISO };
+  }
+
+  // 🔥 period (fallback)
+  const raw = (params.get("period") || "hoje").toLowerCase().trim();
 
   let startLocalISO = baseOp;
   let endLocalISO = addDaysISO(baseOp, 1); // exclusivo
@@ -92,6 +144,25 @@ function resolveRange(params: URLSearchParams) {
     startLocalISO = addDaysISO(baseOp, -29);
     endLocalISO = addDaysISO(baseOp, 1);
     label = "Últimos 30 dias";
+  } else if (raw === "este_mes") {
+    const { y, m } = parseISODate(baseOp);
+    const first = `${y}-${pad2(m)}-01`;
+    startLocalISO = first;
+    endLocalISO = addDaysISO(baseOp, 1); // até hoje op (inclusive)
+    label = "Esse mês";
+  } else if (raw === "mes_anterior") {
+    const { y, m } = parseISODate(baseOp);
+    // primeiro dia do mês atual em UTC (meio-dia), volta 1 dia => último dia do mês anterior
+    const firstThisMonth = Date.UTC(y, m - 1, 1, 12, 0, 0);
+    const lastPrevDate = new Date(firstThisMonth - 24 * 60 * 60 * 1000);
+    const yy = lastPrevDate.getUTCFullYear();
+    const mm = lastPrevDate.getUTCMonth() + 1;
+    const lastPrevISO = `${yy}-${pad2(mm)}-${pad2(lastPrevDate.getUTCDate())}`;
+    const firstPrevISO = `${yy}-${pad2(mm)}-01`;
+
+    startLocalISO = firstPrevISO;
+    endLocalISO = addDaysISO(lastPrevISO, 1);
+    label = "Mês anterior";
   } else {
     // hoje (default)
     startLocalISO = baseOp;
@@ -116,10 +187,7 @@ type OrderRow = {
 
 // normaliza texto p/ bater certinho
 function norm(s: any) {
-  return String(s || "")
-    .trim()
-    .toUpperCase()
-    .replace(/\s+/g, " ");
+  return String(s || "").trim().toUpperCase().replace(/\s+/g, " ");
 }
 
 // Mapas p/ “consertar” variações comuns
@@ -236,7 +304,12 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: cashError.message }, { status: 500 });
     }
 
-    const cash = (cashRows || []) as Array<{ type: string | null; amount: any; occurred_at: string; op_date: string }>;
+    const cash = (cashRows || []) as Array<{
+      type: string | null;
+      amount: any;
+      occurred_at: string;
+      op_date: string;
+    }>;
 
     const despesas = cash
       .filter((r) => norm(r.type) === "EXPENSE")
@@ -332,9 +405,18 @@ export async function GET(req: NextRequest) {
 
     // (opcional) compat antigo
     const groups = {
-      pagamentos: byPagamentoDyn.map((x) => ({ ...x, pct: faturamento > 0 ? (x.valor / faturamento) * 100 : 0 })),
-      plataformas: byPlataformaDyn.map((x) => ({ ...x, pct: faturamento > 0 ? (x.valor / faturamento) * 100 : 0 })),
-      atendimentos: byAtendimentoDyn.map((x) => ({ ...x, pct: faturamento > 0 ? (x.valor / faturamento) * 100 : 0 })),
+      pagamentos: byPagamentoDyn.map((x) => ({
+        ...x,
+        pct: faturamento > 0 ? (x.valor / faturamento) * 100 : 0,
+      })),
+      plataformas: byPlataformaDyn.map((x) => ({
+        ...x,
+        pct: faturamento > 0 ? (x.valor / faturamento) * 100 : 0,
+      })),
+      atendimentos: byAtendimentoDyn.map((x) => ({
+        ...x,
+        pct: faturamento > 0 ? (x.valor / faturamento) * 100 : 0,
+      })),
     };
 
     return NextResponse.json({
@@ -360,6 +442,9 @@ export async function GET(req: NextRequest) {
       groups,
     });
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || "Erro desconhecido" }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: e?.message || "Erro desconhecido" },
+      { status: 500 }
+    );
   }
 }

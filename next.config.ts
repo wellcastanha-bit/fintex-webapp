@@ -8,28 +8,24 @@ const withPWA = (withPWAInit as unknown as (opts: any) => (cfg: NextConfig) => N
   skipWaiting: true,
 
   // ✅ não roda SW em dev
-  disable: process.env.NODE_ENV === "development",
+  disable: process.env.NODE_ENV !== "production",
 
-  // ✅ evita cache agressivo do manifest/ícones (ajuda muito em update de ícone)
-  // (pode remover depois que estabilizar)
-  buildExcludes: [/manifest\.json$/i, /site\.webmanifest$/i],
-
-  // ✅ fallback offline simples (crie /public/offline.html se quiser)
+  // ✅ se quiser offline depois, descomenta e cria /public/offline.html
   // fallback: { document: "/offline.html" },
 });
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
 
-  // ✅ next-pwa precisa de webpack; turbopack ainda não é compatível
-  // deixe o objeto, e garanta que você NÃO está rodando "next dev --turbopack"
-  turbopack: {},
-
   experimental: {
     optimizePackageImports: ["lucide-react"],
   },
 
-  // ✅ headers úteis pra PWA (especialmente Android/Chrome)
+  // ✅ evita o erro do Next 16 (turbopack default + plugin que usa webpack)
+  // (não “migra” o plugin, só para o warning/error e deixa explícito)
+  turbopack: {},
+
+  // ✅ headers úteis pra PWA (especialmente Android/Chrome) + evitar cache de ícone/manifest
   async headers() {
     return [
       {
@@ -49,6 +45,10 @@ const nextConfig: NextConfig = {
       },
       {
         source: "/icon-512.png",
+        headers: [{ key: "Cache-Control", value: "no-store, must-revalidate" }],
+      },
+      {
+        source: "/favicon.ico",
         headers: [{ key: "Cache-Control", value: "no-store, must-revalidate" }],
       },
     ];

@@ -1,7 +1,7 @@
 {
   "name": "Gestão Pizza Blu - Fintex",
   "short_name": "Fintex",
-  "start_url": "/",
+  "start_url": "/m",
   "scope": "/",
   "display": "standalone",
   "background_color": "#011b3c",
