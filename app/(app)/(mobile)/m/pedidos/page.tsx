@@ -781,67 +781,67 @@ export default function MobilePedidosPage() {
           </Shell>
         ) : null}
 
-        <Shell>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr auto",
-              gap: 12,
-              alignItems: "baseline",
-              minWidth: 0,
-            }}
-          >
-            <div
-              style={{
-                fontSize: 12,
-                opacity: 0.82,
-                fontWeight: 950,
-                minWidth: 0,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {loading ? "Carregando..." : `Total de pedidos: ${totalPedidos}`}
-            </div>
+<Shell>
+  <div
+    style={{
+      display: "grid",
+      gridTemplateColumns: "minmax(0, 1fr) max-content", // ✅ chave
+      gap: 12,
+      alignItems: "baseline",
+      minWidth: 0,
+    }}
+  >
+    <div
+      style={{
+        fontSize: 12,
+        opacity: 0.82,
+        fontWeight: 950,
+        minWidth: 0,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {loading ? "Carregando..." : `Total de pedidos: ${totalPedidos}`}
+    </div>
 
-            <div
-              style={{
-                fontSize: 13,
-                fontWeight: 1000,
-                opacity: 0.95,
-                whiteSpace: "nowrap",
-                maxWidth: 160,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                textAlign: "right",
-              }}
-            >
-              {loading ? "—" : fmtBRL(totalValor)}
-            </div>
-          </div>
+    <div
+      style={{
+        fontSize: 13,
+        fontWeight: 1000,
+        opacity: 0.95,
+        whiteSpace: "nowrap",
+        justifySelf: "end",   // ✅ gruda à direita
+        flexShrink: 0 as any, // (não afeta no grid, mas ok)
+        // ❌ remove maxWidth/ellipsis aqui pra nunca cortar
+      }}
+    >
+      {loading ? "—" : fmtBRL(totalValor)}
+    </div>
+  </div>
 
-          <div style={{ marginTop: 8, fontSize: 11, opacity: 0.7, fontWeight: 950 }}>
-            {isoToBR(fromISO)} - {isoToBR(toISO)}
-          </div>
+  <div style={{ marginTop: 8, fontSize: 11, opacity: 0.7, fontWeight: 950 }}>
+    {isoToBR(fromISO)} - {isoToBR(toISO)}
+  </div>
 
-          {err ? (
-            <div
-              style={{
-                marginTop: 12,
-                padding: "10px 12px",
-                borderRadius: 14,
-                border: "1px solid rgba(255,100,120,0.35)",
-                background: "rgba(255,100,120,0.08)",
-                fontSize: 12,
-                fontWeight: 900,
-                opacity: 0.95,
-              }}
-            >
-              {err}
-            </div>
-          ) : null}
-        </Shell>
+  {err ? (
+    <div
+      style={{
+        marginTop: 12,
+        padding: "10px 12px",
+        borderRadius: 14,
+        border: "1px solid rgba(255,100,120,0.35)",
+        background: "rgba(255,100,120,0.08)",
+        fontSize: 12,
+        fontWeight: 900,
+        opacity: 0.95,
+      }}
+    >
+      {err}
+    </div>
+  ) : null}
+</Shell>
+
 
         <div style={{ display: "grid", gap: 10 }}>
           {pedidos.map((p) => (
