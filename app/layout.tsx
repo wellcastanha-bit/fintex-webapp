@@ -6,16 +6,26 @@ export const metadata: Metadata = {
   title: "Gestão Pizza Blu - Fintex",
   description: "Gestão financeira inteligente para bares e restaurantes",
 
+  // ✅ Android / Chrome (PWA) + Fallbacks (favicon)
   icons: {
-    icon: "/favicon.ico",
+    icon: [
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+      { url: "/favicon.ico", type: "image/x-icon" },
+    ],
     shortcut: "/favicon.ico",
-    apple: "/apple-touch-icon.png",
+
+    // ✅ iPhone / iOS (Add to Home Screen)
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
   },
 
+  // ✅ PWA manifest (Android/Chrome/Edge)
   manifest: "/site.webmanifest",
 
+  // ✅ Some browsers still read it here
   themeColor: "#041328",
 
+  // ✅ iOS standalone
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
@@ -30,16 +40,10 @@ export const viewport: Viewport = {
   maximumScale: 1,
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="pt-br">
-      <body className="fintex-body">
-        {children}
-      </body>
+      <body className="fintex-body">{children}</body>
     </html>
   );
 }
