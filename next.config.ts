@@ -10,6 +10,10 @@ const withPWA = (withPWAInit as unknown as (opts: any) => (cfg: NextConfig) => N
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+
+  // ✅ evita erro Turbopack x webpack (next-pwa usa webpack)
+  turbopack: {},
+
   experimental: {
     optimizePackageImports: ["lucide-react"],
   },
