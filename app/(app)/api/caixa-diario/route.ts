@@ -2,20 +2,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-/**
- * ✅ Caixa Diário (SEM TENANT / SEM COMPANY NO FRONT)
- * - GET    /api/caixa-diario?date=YYYY-MM-DD
- * - POST   /api/caixa-diario   (cria lançamento)
- * - PATCH  /api/caixa-diario   (salva contagens)
- *
- * ✅ Usa SERVICE ROLE aqui (server-only).
- * ✅ Se FIN_TEX_API_KEY existir, exige header: x-fintex-key
- */
-
-const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-// ✅ FIXO (sem tenants agora) — NÃO expor no retorno
 const COMPANY_ID = "default";
 
 function json(ok: boolean, data: any, status = 200) {
@@ -23,8 +9,20 @@ function json(ok: boolean, data: any, status = 200) {
 }
 
 function requireEnv() {
+  const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
   if (!SUPABASE_URL) throw new Error("Missing SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL)");
   if (!SUPABASE_SERVICE_ROLE_KEY) throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY");
+
+  return { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY };
+}
+
+function getSupabase() {
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = requireEnv();
+  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { persistSession: false },
+  });
 }
 
 function checkApiKey(req: Request) {
@@ -38,11 +36,7 @@ function isISODate(s: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
 
-const supabase = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!, {
-  auth: { persistSession: false },
-});
-
-async function ensureSession(op_date: string) {
+async function ensureSession(supabase: any, op_date: string) {
   const { data: existing, error: selErr } = await supabase
     .from("cash_sessions")
     .select("id, op_date, initial_counts, final_counts, created_at, updated_at")
@@ -73,7 +67,6 @@ async function ensureSession(op_date: string) {
 ========================= */
 export async function GET(req: Request) {
   try {
-    requireEnv();
     if (!checkApiKey(req)) return json(false, { error: "unauthorized" }, 401);
 
     const url = new URL(req.url);
@@ -83,7 +76,9 @@ export async function GET(req: Request) {
       return json(false, { error: 'missing/invalid "date" (YYYY-MM-DD)' }, 400);
     }
 
-    const session = await ensureSession(date);
+    const supabase = getSupabase();
+
+    const session = await ensureSession(supabase, date);
 
     const { data: entries, error: entErr } = await supabase
       .from("cash_entries")
@@ -105,11 +100,9 @@ export async function GET(req: Request) {
 ========================= */
 export async function POST(req: Request) {
   try {
-    requireEnv();
     if (!checkApiKey(req)) return json(false, { error: "unauthorized" }, 401);
 
     const body = await req.json().catch(() => ({}));
-
     const dateISO = String(body?.dateISO || "").trim();
     const type = String(body?.type || "").trim();
 
@@ -123,7 +116,9 @@ export async function POST(req: Request) {
     const amount = Number(typeof amountRaw === "string" ? amountRaw.replace(",", ".") : amountRaw);
     if (!Number.isFinite(amount) || amount <= 0) return json(false, { error: 'invalid "amount"' }, 400);
 
-    await ensureSession(dateISO);
+    const supabase = getSupabase();
+
+    await ensureSession(supabase, dateISO);
 
     const occurred_at =
       body?.occurred_at && String(body.occurred_at).trim()
@@ -157,7 +152,6 @@ export async function POST(req: Request) {
 ========================= */
 export async function PATCH(req: Request) {
   try {
-    requireEnv();
     if (!checkApiKey(req)) return json(false, { error: "unauthorized" }, 401);
 
     const body = await req.json().catch(() => ({}));
@@ -172,11 +166,13 @@ export async function PATCH(req: Request) {
       return json(false, { error: "nothing_to_update" }, 400);
     }
 
-    await ensureSession(dateISO);
+    const supabase = getSupabase();
+
+    await ensureSession(supabase, dateISO);
 
     const patch: any = {};
     if (initial_counts != null) patch.initial_counts = initial_counts;
-    if (final_counts != null) patch.final_counts = final_counts;
+    if (final_counts !=null) patch.final_counts = final_counts;
 
     const { data, error } = await supabase
       .from("cash_sessions")

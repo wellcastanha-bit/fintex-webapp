@@ -2,6 +2,14 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
+/**
+ * ✅ Reservas (tabela: reservations)
+ * - GET   /api/reservas?date=YYYY-MM-DD   (lista do dia)
+ * - POST  /api/reservas                  (cria)
+ *
+ * ✅ Aceita payload tanto no formato PT (nome/hora_chegada...) quanto no formato DB (customer_name/start_time...)
+ */
+
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)!
@@ -10,8 +18,12 @@ const supabase = createClient(
 // ✅ TABELA REAL
 const TABLE = "reservations";
 
+// Brasil (-03:00)
 const TZ_OFFSET_MIN = -180;
 
+/* =========================
+   Utils
+========================= */
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
@@ -59,19 +71,30 @@ function centsToBRL(cents: any) {
   const c = Number.isFinite(n) ? n : 0;
   return c / 100;
 }
+function isISODate(s: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
 
+/* =========================
+   GET (lista reservas do dia)
+========================= */
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const dateISO = searchParams.get("date") || todayISO_BR();
 
+  // se vier lixo, cai pra hoje (evita quebrar tela)
+  const safeDate = isISODate(dateISO) ? dateISO : todayISO_BR();
+
   const { data, error } = await supabase
     .from(TABLE)
-    .select("id, created_at, day, start_time, end_time, people, customer_name, phone, notes, table_code, location, value_cents, is_paid")
-    .eq("day", dateISO)
+    .select(
+      "id, created_at, day, start_time, end_time, people, customer_name, phone, notes, table_code, location, value_cents, is_paid"
+    )
+    .eq("day", safeDate)
     .order("start_time", { ascending: true });
 
   if (error) {
-    return NextResponse.json({ ok: false, error: error.message, debug: { TABLE, dateISO } }, { status: 500 });
+    return NextResponse.json({ ok: false, error: error.message, debug: { TABLE, dateISO: safeDate } }, { status: 500 });
   }
 
   const rows = (data ?? []).map((r: any) => ({
@@ -96,6 +119,10 @@ export async function GET(req: Request) {
   return NextResponse.json({ ok: true, rows });
 }
 
+/* =========================
+   POST (cria reserva)
+   ✅ aceita PT e DB/camelCase
+========================= */
 export async function POST(req: Request) {
   let body: any;
   try {
@@ -104,21 +131,62 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "INVALID_JSON" }, { status: 400 });
   }
 
-  const day = str(body?.date) ?? todayISO_BR();
-  const start_time = toTimeHHMMSS(body?.hora_chegada);
-  const end_time = toTimeHHMMSS(body?.hora_saida);
-  const customer_name = str(body?.nome);
-  const people = toIntOrNull(body?.pessoas) ?? 1;
-  const table_code = str(body?.mesa);
-  const phone = str(body?.telefone);
-  const notes = str(body?.obs);
-  const location = str(body?.locacao);
-  const value_cents = moneyBRToCents(body?.valor);
-  const is_paid = String(body?.status || "").toLowerCase().includes("pago");
+  // ✅ Day (PT: date | DB: day)
+  const day = str(body?.date) ?? str(body?.day) ?? todayISO_BR();
 
+  // ✅ Times (PT: hora_chegada/hora_saida | DB: start_time/end_time | camelCase)
+  const start_time =
+    toTimeHHMMSS(body?.hora_chegada) ??
+    toTimeHHMMSS(body?.start_time) ??
+    toTimeHHMMSS(body?.horaChegada) ??
+    toTimeHHMMSS(body?.startTime);
+
+  const end_time =
+    toTimeHHMMSS(body?.hora_saida) ??
+    toTimeHHMMSS(body?.end_time) ??
+    toTimeHHMMSS(body?.horaSaida) ??
+    toTimeHHMMSS(body?.endTime);
+
+  // ✅ Nome (PT: nome | DB: customer_name | camelCase)
+  const customer_name =
+    str(body?.nome) ??
+    str(body?.customer_name) ??
+    str(body?.customerName) ??
+    str(body?.cliente) ??
+    str(body?.name);
+
+  // ✅ Outros campos (PT e DB)
+  const people = toIntOrNull(body?.pessoas) ?? toIntOrNull(body?.people) ?? 1;
+
+  const table_code = str(body?.mesa) ?? str(body?.table_code) ?? str(body?.tableCode);
+
+  const phone = str(body?.telefone) ?? str(body?.phone);
+
+  const notes = str(body?.obs) ?? str(body?.notes);
+
+  const location = str(body?.locacao) ?? str(body?.location);
+
+  const value_cents = moneyBRToCents(body?.valor ?? body?.value ?? body?.value_cents);
+
+  const is_paid =
+    body?.is_paid === true ||
+    String(body?.status ?? "")
+      .toLowerCase()
+      .includes("pago");
+
+  // ✅ Regras mínimas
   if (!customer_name || !start_time) {
     return NextResponse.json(
-      { ok: false, error: "MISSING_REQUIRED_FIELDS", hint: "nome e hora_chegada são obrigatórios" },
+      {
+        ok: false,
+        error: "MISSING_REQUIRED_FIELDS",
+        hint: "nome/customer_name e hora_chegada/start_time são obrigatórios",
+        debug_received: {
+          day,
+          nome: body?.nome ?? body?.customer_name ?? body?.customerName ?? null,
+          hora_chegada: body?.hora_chegada ?? body?.start_time ?? body?.startTime ?? null,
+        },
+      },
       { status: 400 }
     );
   }

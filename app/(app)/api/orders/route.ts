@@ -28,6 +28,13 @@ function toISODateLocalFromMs(ms: number) {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
+function addDaysISO(dateISO: string, days: number) {
+  const [yy, mm, dd] = dateISO.split("-").map((x) => Number(x));
+  const d = new Date(yy, (mm || 1) - 1, dd || 1);
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
 /**
  * Converte "data local" + hora local em UTC ISO (com Z) usando offset fixo.
  * local = UTC + offset  => UTC = local - offset
@@ -48,6 +55,18 @@ function operationalRangeUTCFromAnchor(dateISO: string) {
   const startISO = localDateTimeToUTCISO(dateISO, OP_CUTOFF_HOUR, 0, 0, 0);
   const startMs = new Date(startISO).getTime();
   const endISO = new Date(startMs + 24 * 60 * 60 * 1000).toISOString();
+  return { startISO, endISO };
+}
+
+/**
+ * Range UTC [start, end) para PERÍODO OPERACIONAL
+ * fromISO = YYYY-MM-DD (âncora início)
+ * toISO   = YYYY-MM-DD (âncora fim)  -> end = (toISO + 1 dia) às 06:00 local
+ */
+function operationalRangeUTCFromTo(fromISO: string, toISO: string) {
+  const startISO = localDateTimeToUTCISO(fromISO, OP_CUTOFF_HOUR, 0, 0, 0);
+  const toPlus1 = addDaysISO(toISO, 1);
+  const endISO = localDateTimeToUTCISO(toPlus1, OP_CUTOFF_HOUR, 0, 0, 0);
   return { startISO, endISO };
 }
 
@@ -141,11 +160,25 @@ export async function GET(req: Request) {
 
   const mode = searchParams.get("mode"); // "caixa" | null
 
-  // ✅ aceita tanto date quanto op_date (mobile usa op_date)
+  // ✅ NOVO: período (range) por dia operacional
+  // Ex: /api/orders?from=2026-02-10&to=2026-02-16
+  const fromISO = searchParams.get("from") || null;
+  const toISO = searchParams.get("to") || null;
+
+  // ✅ mantém compat: aceita tanto date quanto op_date
   const dateISO = searchParams.get("date") || searchParams.get("op_date"); // YYYY-MM-DD
 
+  // ✅ decide range:
+  // - se vier from/to => range operacional [from 06:00, (to+1) 06:00)
+  // - senão => janela operacional de 1 dia pela âncora date/op_date/hoje
   const anchorISO = dateISO || currentOperationalAnchorISO();
-  const { startISO, endISO } = operationalRangeUTCFromAnchor(anchorISO);
+
+  const range =
+    fromISO && toISO
+      ? operationalRangeUTCFromTo(fromISO, toISO)
+      : operationalRangeUTCFromAnchor(anchorISO);
+
+  const { startISO, endISO } = range;
 
   let q = supabase
     .from("orders")
@@ -159,7 +192,14 @@ export async function GET(req: Request) {
   const { data, error } = await q;
 
   if (error) {
-    return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: error.message,
+        debug: { startISO, endISO, anchorISO, fromISO, toISO },
+      },
+      { status: 500 }
+    );
   }
 
   // ✅ modo caixa: manter como estava, mas também devolver aliases (compat)
@@ -182,10 +222,14 @@ export async function GET(req: Request) {
       atendimento: o.service_type ?? null,
     }));
 
-    return NextResponse.json({ ok: true, items, op: { anchorISO, startISO, endISO } });
+    return NextResponse.json({
+      ok: true,
+      items,
+      op: { anchorISO, fromISO, toISO, startISO, endISO },
+    });
   }
 
-  // ✅ rows: AGORA devolve OS DOIS NOMES (mobile e desktop)
+  // ✅ rows: devolve OS DOIS NOMES (mobile e desktop)
   const rows = (data ?? []).map((o: any) => ({
     id: String(o.id),
     created_at: String(o.created_at),
@@ -210,7 +254,7 @@ export async function GET(req: Request) {
     r_inicial: o.r_inicial ?? 0,
     troco: o.troco ?? 0,
 
-    // aliases "bonitinhos" que você já usava
+    // aliases "bonitinhos"
     plataforma: o.platform ?? null,
     atendimento: o.service_type ?? null,
     bairro: o.bairros ?? null,
@@ -218,7 +262,11 @@ export async function GET(req: Request) {
     valor_pago: o.r_inicial ?? 0,
   }));
 
-  return NextResponse.json({ ok: true, rows, op: { anchorISO, startISO, endISO } });
+  return NextResponse.json({
+    ok: true,
+    rows,
+    op: { anchorISO, fromISO, toISO, startISO, endISO },
+  });
 }
 
 /* =========================

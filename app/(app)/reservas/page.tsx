@@ -45,7 +45,7 @@ export default function ReservasPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  // ✅ cache local (AGORA: mês inteiro + refresh do dia)
+  // ✅ cache local (mês inteiro + refresh do dia)
   const [reservas, setReservas] = useState<Reserva[]>([]);
   const [saving, setSaving] = useState(false);
   const [loadingDay, setLoadingDay] = useState(false);
@@ -108,33 +108,57 @@ export default function ReservasPage() {
   const limpar = () => resetForm();
 
   // =========================
-  // BACKEND (GET / POST / PATCH)
+  // BACKEND (GET / POST)
   // =========================
+
+  // normaliza "2026-02-09T..." -> "2026-02-09"
   const normISO = (dayLike: any) => {
     const s = String(dayLike ?? "").trim();
     if (!s) return "";
-    // ✅ se vier "2026-02-09T00:00:00.000Z" ou Date, pega só YYYY-MM-DD
     const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
     return m ? m[1] : s.slice(0, 10);
   };
 
-  const mapRowToReserva = (r: any): Reserva => {
-    const valueCents = Number(r?.value_cents ?? 0) || 0;
-    const locVal = valueCents > 0 ? valueCents / 100 : null;
+  // ✅ NORMALIZA STATUS SEMPRE PRA "PAGO" | "PENDENTE"
+  const normLocStatus = (v: any): LocacaoStatus => {
+    const s = String(v ?? "").trim().toLowerCase();
+    if (s === "pago" || s === "paid" || s === "true" || s === "1") return "PAGO";
+    return "PENDENTE";
+  };
+
+  // ✅ API atual retorna rows no formato PT:
+  // { date, hora_chegada, hora_saida, pessoas, mesa, nome, telefone, obs, locacao, valor, status, _raw }
+  const mapApiRowToReserva = (r: any): Reserva => {
+    const dataISO = normISO(r?.date);
+    const chegada = String(r?.hora_chegada || "").slice(0, 5) || "19:00";
+    const saida = r?.hora_saida ? String(r.hora_saida).slice(0, 5) : "";
+
+    const pessoasN = Number(r?.pessoas ?? 1) || 1;
+
+    const nomeS = String(r?.nome ?? "Sem nome");
+    const telS = String(r?.telefone ?? "");
+    const mesaS = String(r?.mesa ?? "");
+    const obsS = String(r?.obs ?? "");
+    const locDesc = String(r?.locacao ?? "");
+
+    const valorNum = Number(r?.valor ?? 0);
+    const locacaoValor = Number.isFinite(valorNum) && valorNum > 0 ? valorNum : null;
+
+    const locacaoStatus = normLocStatus(r?.status);
 
     return {
-      id: String(r.id),
-      dataISO: normISO(r.day),
-      chegada: String(r.start_time || "").slice(0, 5) || "19:00",
-      saida: r.end_time ? String(r.end_time).slice(0, 5) : "",
-      pessoas: Number(r.people ?? 1) || 1,
-      nome: String(r.customer_name ?? "Sem nome"),
-      telefone: String(r.phone ?? ""),
-      mesa: String(r.table_code ?? ""),
-      observacao: String(r.notes ?? ""),
-      locacaoDesc: String(r.location ?? ""),
-      locacaoValor: locVal,
-      locacaoStatus: (r.is_paid ? "PAGO" : "PENDENTE") as LocacaoStatus,
+      id: String(r?.id ?? ""),
+      dataISO,
+      chegada,
+      saida,
+      pessoas: pessoasN,
+      nome: nomeS,
+      telefone: telS,
+      mesa: mesaS,
+      observacao: obsS,
+      locacaoDesc: locDesc,
+      locacaoValor,
+      locacaoStatus,
     };
   };
 
@@ -153,32 +177,51 @@ export default function ReservasPage() {
     });
   };
 
+  // helpers de mês
+  const getMonthRangeISO = (month: Date) => {
+    const y = month.getFullYear();
+    const m = month.getMonth();
+    const fromISO = toISODate(new Date(y, m, 1));
+    const toISO = toISODate(new Date(y, m + 1, 0));
+    return { fromISO, toISO };
+  };
+
+  const eachDayISOInclusive = (fromISO: string, toISO: string) => {
+    const out: string[] = [];
+    const [fy, fm, fd] = fromISO.split("-").map(Number);
+    const [ty, tm, td] = toISO.split("-").map(Number);
+    const start = new Date(fy, fm - 1, fd);
+    const end = new Date(ty, tm - 1, td);
+
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      out.push(toISODate(new Date(d)));
+    }
+    return out;
+  };
+
   // ✅ carrega mês inteiro (pra destacar sem clicar)
   const fetchReservasDoMes = async (month: Date) => {
     setLoadingMonth(true);
     try {
-      const y = month.getFullYear();
-      const m = month.getMonth();
-      const fromISO = toISODate(new Date(y, m, 1));
-      const toISO = toISODate(new Date(y, m + 1, 0));
+      const { fromISO, toISO } = getMonthRangeISO(month);
+      const days = eachDayISOInclusive(fromISO, toISO);
 
-      const res = await fetch(`/api/reservas?from=${fromISO}&to=${toISO}`, { cache: "no-store" });
+      const results = await Promise.all(
+        days.map(async (dayISO) => {
+          const res = await fetch(`/api/reservas?date=${dayISO}`, { cache: "no-store" });
+          const json = await res.json().catch(() => null);
 
-      const text = await res.text();
-      let json: any = null;
-      try {
-        json = JSON.parse(text);
-      } catch {
-        console.error("GET /api/reservas (mês) retornou não-JSON:", text);
-        throw new Error("API retornou HTML (provável 500). Veja o console.");
-      }
+          if (!res.ok || !json?.ok) {
+            console.error("GET /api/reservas (mês/dia) falhou:", { dayISO, status: res.status, json });
+            return [] as Reserva[];
+          }
 
-      if (!res.ok || !json?.ok) {
-        console.error("GET /api/reservas (mês) falhou:", json);
-        throw new Error(json?.error || `HTTP ${res.status}`);
-      }
+          const rows = Array.isArray(json.rows) ? json.rows : [];
+          return rows.map(mapApiRowToReserva);
+        })
+      );
 
-      const monthList: Reserva[] = (json.data ?? []).map(mapRowToReserva);
+      const monthList = results.flat().filter((r) => r?.id && r?.dataISO);
       mergeMonthIntoCache(fromISO, toISO, monthList);
     } catch (e) {
       console.error("Erro carregando reservas do mês:", e);
@@ -187,11 +230,11 @@ export default function ReservasPage() {
     }
   };
 
-  // ✅ carrega dia selecionado (pra lista do dia estar sempre fresh)
+  // ✅ carrega dia selecionado (lista do dia)
   const fetchReservasDoDia = async (dayISO: string) => {
     setLoadingDay(true);
     try {
-      const res = await fetch(`/api/reservas?day=${dayISO}`, { cache: "no-store" });
+      const res = await fetch(`/api/reservas?date=${dayISO}`, { cache: "no-store" });
 
       const text = await res.text();
       let json: any = null;
@@ -207,23 +250,20 @@ export default function ReservasPage() {
         throw new Error(json?.error || `HTTP ${res.status}`);
       }
 
-      const dayList: Reserva[] = (json.data ?? []).map(mapRowToReserva);
+      const dayList: Reserva[] = (Array.isArray(json.rows) ? json.rows : []).map(mapApiRowToReserva);
       mergeDayIntoCache(dayISO, dayList);
     } catch (e) {
       console.error("Erro carregando reservas do dia:", e);
-      // não apaga cache
     } finally {
       setLoadingDay(false);
     }
   };
 
-  // ✅ ao abrir / trocar mês: carrega mês inteiro → destaque aparece sem clique
   useEffect(() => {
     fetchReservasDoMes(monthDate);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [monthDate]);
 
-  // ✅ ao trocar o dia: carrega só o dia (lista do dia)
   useEffect(() => {
     fetchReservasDoDia(selectedISO);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -248,7 +288,9 @@ export default function ReservasPage() {
     setLocacaoDesc(r.locacaoDesc || "");
     const cents = Math.round(((r.locacaoValor ?? 0) as number) * 100);
     setLocacaoValor(fmtBRL(String(cents)));
-    setLocacaoStatus(r.locacaoStatus || "PENDENTE");
+
+    // ✅ garante que o estado vira "PAGO" ou "PENDENTE" sempre
+    setLocacaoStatus(normLocStatus(r.locacaoStatus));
 
     setConfirmDeleteId(null);
   };
@@ -256,13 +298,16 @@ export default function ReservasPage() {
   const doDelete = async (id: string) => {
     setSaving(true);
     try {
-      await fetch(`/api/reservas/${id}`, { method: "DELETE" }).catch(() => null);
+      const res = await fetch(`/api/reservas/${id}`, { method: "DELETE" }).catch(() => null);
+      if (res && !res.ok) {
+        const j = await res.json().catch(() => null);
+        console.error("DELETE /api/reservas/:id falhou:", j);
+      }
 
       setReservas((cur) => cur.filter((x) => x.id !== id));
       setConfirmDeleteId(null);
       if (editingId === id) setEditingId(null);
 
-      // ✅ garante highlights perfeitos após delete
       await fetchReservasDoMes(monthDate);
       await fetchReservasDoDia(selectedISO);
     } finally {
@@ -305,23 +350,24 @@ export default function ReservasPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
-        const json = await res.json();
-        if (!json?.ok) throw new Error(json?.error || "Falha ao criar reserva");
+        const json = await res.json().catch(() => null);
+        if (!res.ok || !json?.ok) throw new Error(json?.error || `HTTP ${res.status}`);
       } else {
         const res = await fetch(`/api/reservas/${editingId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
-        const json = await res.json();
-        if (!json?.ok) throw new Error(json?.error || "Falha ao salvar alterações");
+        const json = await res.json().catch(() => null);
+        if (!res.ok || !json?.ok) throw new Error(json?.error || `HTTP ${res.status}`);
       }
 
-      // ✅ atualiza dia + mês (pra calendário ficar certo sem clicar)
       await fetchReservasDoMes(monthDate);
       await fetchReservasDoDia(selectedISO);
 
       resetForm();
+    } catch (e: any) {
+      console.error("Erro ao salvar reserva:", e?.message || e);
     } finally {
       setSaving(false);
     }
