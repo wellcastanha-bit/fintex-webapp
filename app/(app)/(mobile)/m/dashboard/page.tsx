@@ -372,7 +372,7 @@ export default function MobileDashboardPage() {
         <Shell style={{ background: BG_PAGE }}>
           <TitleRow
             title="Dashboard"
-            subtitle={`Pizza Blu • ${headerLabel || new Date().toLocaleDateString("pt-BR")}`}
+            subtitle={`ValeFood • ${headerLabel || new Date().toLocaleDateString("pt-BR")}`}
             right={
               <PeriodSelect
                 value={period}

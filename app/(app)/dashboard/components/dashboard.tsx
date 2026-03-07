@@ -133,7 +133,7 @@ function opDateFromDashboardQuery(q: DashboardQuery): string | null {
 }
 
 export default function DashboardView() {
-  const mockTitle = useMemo(() => "Pizza Blu · 30/01/2026 · Sexta-feira", []);
+  const mockTitle = useMemo(() => "ValeFood · 30/01/2026 · Sexta-feira", []);
 
   // ✅ BASE FIXA (nada some)
   const basePlataformas = useMemo<PlataformaRow[]>(
