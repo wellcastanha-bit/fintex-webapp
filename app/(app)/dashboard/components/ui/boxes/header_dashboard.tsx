@@ -7,10 +7,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
    HeaderDashboard (FINtEX)
    ✅ Centro REAL: seletor de datas fica NO MEIO entre ESQ e DIR
    ✅ Não empurra pro lado direito
-   ✅ Agora: emite onDateChange com payload pronto pro /api/dashboard
-   ✅ Subtitle agora acompanha o seletor:
-      - 1 dia: DD/MM/YYYY · dia-da-semana
-      - intervalo: DD/MM/YYYY - DD/MM/YYYY
+   ✅ Emite query alinhada com /api/dashboard
+   ✅ Subtitle acompanha o seletor
 ========================================================= */
 
 type PresetKey =
@@ -25,15 +23,14 @@ type PresetKey =
 
 type DateSelection = {
   preset: PresetKey;
-  startISO: string; // YYYY-MM-DD (inclusive)
-  endISO: string; // YYYY-MM-DD (inclusive)
+  startISO: string;
+  endISO: string;
 };
 
-// ✅ payload pronto pro backend
+// ✅ payload alinhado com API real
 export type DashboardQuery =
-  | { kind: "period"; period: "hoje" | "ontem" | "ultimos_7" | "ultimos_30" | "mes_anterior" | "esse_mes" }
-  | { kind: "date"; date: string } // YYYY-MM-DD
-  | { kind: "range"; start: string; end: string }; // YYYY-MM-DD (inclusive)
+  | { kind: "period"; period: "hoje" | "ontem" | "7d" | "30d" | "mes_anterior" | "este_mes" }
+  | { kind: "range"; from: string; to: string };
 
 function pad2(n: number) {
   return String(n).padStart(2, "0");
@@ -64,7 +61,9 @@ function isSameDay(a: Date, b: Date) {
 }
 function clampISOOrder(aISO: string, bISO: string) {
   if (!aISO || !bISO) return { startISO: aISO, endISO: bISO };
-  return aISO <= bISO ? { startISO: aISO, endISO: aISO <= bISO ? bISO : aISO } : { startISO: bISO, endISO: aISO };
+  return aISO <= bISO
+    ? { startISO: aISO, endISO: bISO }
+    : { startISO: bISO, endISO: aISO };
 }
 function formatBR(iso: string) {
   const d = fromISODate(iso);
@@ -72,9 +71,7 @@ function formatBR(iso: string) {
 }
 function weekdayBR(iso: string) {
   const d = fromISODate(iso);
-  // "sexta-feira"
   const w = d.toLocaleDateString("pt-BR", { weekday: "long" });
-  // "Sexta-feira"
   return w ? w.charAt(0).toUpperCase() + w.slice(1) : "";
 }
 function monthLabel(d: Date) {
@@ -95,75 +92,91 @@ function monthLabel(d: Date) {
   return `${meses[d.getMonth()]} de ${d.getFullYear()}`;
 }
 
-// ✅ subtitle acompanha seleção
 function buildSubtitleFromSel(subtitle: string, sel: DateSelection) {
-  // pega prefixo antes do primeiro "·" (ex: "Pizza Blu")
   const prefix = (subtitle || "").split("·")[0]?.trim() || subtitle || "";
 
   if (!sel?.startISO || !sel?.endISO) return subtitle || "";
 
   const startBR = formatBR(sel.startISO);
   const endBR = formatBR(sel.endISO);
-
   const sameDay = sel.startISO === sel.endISO;
 
-  const datePart = sameDay ? `${startBR} · ${weekdayBR(sel.startISO)}` : `${startBR} - ${endBR}`;
+  const datePart = sameDay
+    ? `${startBR} · ${weekdayBR(sel.startISO)}`
+    : `${startBR} - ${endBR}`;
 
   return prefix ? `${prefix} · ${datePart}` : datePart;
 }
 
 function computePreset(preset: PresetKey, now = new Date()): DateSelection {
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
   if (preset === "hoje") {
     const iso = toISODate(today);
     return { preset, startISO: iso, endISO: iso };
   }
+
   if (preset === "ontem") {
     const d = addDays(today, -1);
     const iso = toISODate(d);
     return { preset, startISO: iso, endISO: iso };
   }
+
   if (preset === "ultimos_7") {
     const end = today;
     const start = addDays(today, -6);
     return { preset, startISO: toISODate(start), endISO: toISODate(end) };
   }
+
   if (preset === "ultimos_30") {
     const end = today;
     const start = addDays(today, -29);
     return { preset, startISO: toISODate(start), endISO: toISODate(end) };
   }
+
   if (preset === "esse_mes") {
     const s = startOfMonth(today);
     const e = endOfMonth(today);
     return { preset, startISO: toISODate(s), endISO: toISODate(e) };
   }
+
   if (preset === "mes_anterior") {
     const prev = addMonths(today, -1);
     const s = startOfMonth(prev);
     const e = endOfMonth(prev);
     return { preset, startISO: toISODate(s), endISO: toISODate(e) };
   }
+
   const iso = toISODate(today);
   return { preset: "uma_data", startISO: iso, endISO: iso };
 }
 
-// ✅ converte seleção do UI para "query" pro /api/dashboard
+// ✅ converte seleção UI para query da API
 function selectionToQuery(sel: DateSelection): DashboardQuery {
   const p = sel.preset;
-  if (p === "uma_data") return { kind: "date", date: sel.startISO };
+
+  if (p === "uma_data") {
+    return { kind: "range", from: sel.startISO, to: sel.startISO };
+  }
+
   if (p === "um_periodo") {
     const ordered = clampISOOrder(sel.startISO, sel.endISO);
-    return { kind: "range", start: ordered.startISO, end: ordered.endISO };
+    return { kind: "range", from: ordered.startISO, to: ordered.endISO };
   }
+
+  if (p === "ultimos_7") return { kind: "period", period: "7d" };
+  if (p === "ultimos_30") return { kind: "period", period: "30d" };
+  if (p === "esse_mes") return { kind: "period", period: "este_mes" };
+
   return { kind: "period", period: p };
 }
 
-// ✅ monta a querystring final
+// ✅ monta QS alinhada com /api/dashboard
 export function buildDashboardQS(q: DashboardQuery) {
-  if (q.kind === "period") return `period=${encodeURIComponent(q.period)}`;
-  if (q.kind === "date") return `date=${encodeURIComponent(q.date)}`;
-  return `start=${encodeURIComponent(q.start)}&end=${encodeURIComponent(q.end)}`;
+  if (q.kind === "period") {
+    return `period=${encodeURIComponent(q.period)}`;
+  }
+  return `from=${encodeURIComponent(q.from)}&to=${encodeURIComponent(q.to)}`;
 }
 
 /* =========================
@@ -186,7 +199,7 @@ function MonthGrid({
   const firstDay = new Date(base.getFullYear(), base.getMonth(), 1);
   const lastDay = endOfMonth(base);
 
-  const leading = firstDay.getDay(); // 0..6
+  const leading = firstDay.getDay();
   const totalDays = lastDay.getDate();
 
   const cells: Array<{ iso: string; date: Date; inMonth: boolean }> = [];
@@ -195,10 +208,12 @@ function MonthGrid({
     const d = addDays(firstDay, -(leading - i));
     cells.push({ iso: toISODate(d), date: d, inMonth: false });
   }
+
   for (let day = 1; day <= totalDays; day++) {
     const d = new Date(base.getFullYear(), base.getMonth(), day);
     cells.push({ iso: toISODate(d), date: d, inMonth: true });
   }
+
   while (cells.length % 7 !== 0) {
     const last = cells[cells.length - 1]?.date || lastDay;
     const nd = addDays(last, 1);
@@ -209,6 +224,7 @@ function MonthGrid({
     if (!startISO || !endISO) return false;
     return iso >= startISO && iso <= endISO;
   };
+
   const isEdge = (iso: string) => {
     if (!startISO) return false;
     if (mode === "single") return iso === startISO;
@@ -239,9 +255,16 @@ function MonthGrid({
           const muted = !c.inMonth;
 
           const today = new Date();
-          const isToday = isSameDay(c.date, new Date(today.getFullYear(), today.getMonth(), today.getDate()));
+          const isToday = isSameDay(
+            c.date,
+            new Date(today.getFullYear(), today.getMonth(), today.getDate())
+          );
 
-          const bg = edge ? "rgba(79,220,255,0.26)" : inRange ? "rgba(79,220,255,0.12)" : "transparent";
+          const bg = edge
+            ? "rgba(79,220,255,0.26)"
+            : inRange
+            ? "rgba(79,220,255,0.12)"
+            : "transparent";
 
           const bd = edge
             ? "1px solid rgba(79,220,255,0.55)"
@@ -269,20 +292,6 @@ function MonthGrid({
                 boxShadow: edge ? "0 0 18px rgba(79,220,255,0.18)" : "none",
                 transition: "180ms ease",
               }}
-              onMouseEnter={(e) => {
-                if (!c.inMonth) return;
-                const el = e.currentTarget;
-                if (!edge) {
-                  el.style.border = "1px solid rgba(79,220,255,0.32)";
-                  el.style.background = "rgba(79,220,255,0.10)";
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!c.inMonth) return;
-                const el = e.currentTarget;
-                el.style.border = bd;
-                el.style.background = bg;
-              }}
             >
               {c.date.getDate()}
             </button>
@@ -296,7 +305,13 @@ function MonthGrid({
 /* =========================
    DatePicker Fintex
 ========================= */
-function DatePickerFintex({ value, onChange }: { value: DateSelection; onChange: (next: DateSelection) => void }) {
+function DatePickerFintex({
+  value,
+  onChange,
+}: {
+  value: DateSelection;
+  onChange: (next: DateSelection) => void;
+}) {
   const TRIGGER_H = 55;
   const DROPDOWN_GAP = 40;
   const DROPDOWN_W = 620;
@@ -372,6 +387,7 @@ function DatePickerFintex({ value, onChange }: { value: DateSelection; onChange:
       setRangeDraftEnd(e);
       return;
     }
+
     const next = computePreset(k);
     onChange(next);
     setOpen(false);
@@ -396,7 +412,11 @@ function DatePickerFintex({ value, onChange }: { value: DateSelection; onChange:
   const applyRange = () => {
     if (!rangeDraftStart || !rangeDraftEnd) return;
     const ordered = clampISOOrder(rangeDraftStart, rangeDraftEnd);
-    onChange({ preset: "um_periodo", startISO: ordered.startISO, endISO: ordered.endISO });
+    onChange({
+      preset: "um_periodo",
+      startISO: ordered.startISO,
+      endISO: ordered.endISO,
+    });
     setOpen(false);
   };
 
@@ -428,14 +448,6 @@ function DatePickerFintex({ value, onChange }: { value: DateSelection; onChange:
             : "0 0 0 1px rgba(79,220,255,0.06)",
           transition: "180ms ease",
           position: "relative",
-        }}
-        onMouseEnter={(e) => {
-          const el = e.currentTarget;
-          if (!open) el.style.border = "1px solid rgba(79,220,255,0.34)";
-        }}
-        onMouseLeave={(e) => {
-          const el = e.currentTarget;
-          if (!open) el.style.border = `1px solid ${shellBd}`;
         }}
       >
         <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
@@ -552,7 +564,9 @@ function DatePickerFintex({ value, onChange }: { value: DateSelection; onChange:
                   ‹
                 </button>
 
-                <div style={{ color: "rgba(255,255,255,0.92)", fontWeight: 950, fontSize: 14 }}>{monthLabel(m1)}</div>
+                <div style={{ color: "rgba(255,255,255,0.92)", fontWeight: 950, fontSize: 14 }}>
+                  {monthLabel(m1)}
+                </div>
 
                 <button
                   type="button"
@@ -572,7 +586,13 @@ function DatePickerFintex({ value, onChange }: { value: DateSelection; onChange:
                 </button>
               </div>
 
-              <MonthGrid monthBase={m1} mode="single" startISO={value.startISO} endISO={value.endISO} onPick={applySingle} />
+              <MonthGrid
+                monthBase={m1}
+                mode="single"
+                startISO={value.startISO}
+                endISO={value.endISO}
+                onPick={applySingle}
+              />
             </div>
           ) : (
             <div style={{ padding: 12 }}>
@@ -599,9 +619,13 @@ function DatePickerFintex({ value, onChange }: { value: DateSelection; onChange:
                 </button>
 
                 <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                  <div style={{ color: "rgba(255,255,255,0.92)", fontWeight: 950, fontSize: 14 }}>{monthLabel(m1)}</div>
+                  <div style={{ color: "rgba(255,255,255,0.92)", fontWeight: 950, fontSize: 14 }}>
+                    {monthLabel(m1)}
+                  </div>
                   <div style={{ width: 1, height: 18, background: "rgba(255,255,255,0.10)" }} />
-                  <div style={{ color: "rgba(255,255,255,0.92)", fontWeight: 950, fontSize: 14 }}>{monthLabel(m2)}</div>
+                  <div style={{ color: "rgba(255,255,255,0.92)", fontWeight: 950, fontSize: 14 }}>
+                    {monthLabel(m2)}
+                  </div>
                 </div>
 
                 <button
@@ -668,13 +692,24 @@ function DatePickerFintex({ value, onChange }: { value: DateSelection; onChange:
                     padding: "0 12px",
                     borderRadius: 12,
                     border: `1px solid ${
-                      !rangeDraftStart || !rangeDraftEnd ? "rgba(255,255,255,0.14)" : "rgba(79,220,255,0.40)"
+                      !rangeDraftStart || !rangeDraftEnd
+                        ? "rgba(255,255,255,0.14)"
+                        : "rgba(79,220,255,0.40)"
                     }`,
-                    background: !rangeDraftStart || !rangeDraftEnd ? "rgba(255,255,255,0.06)" : "rgba(79,220,255,0.10)",
-                    color: !rangeDraftStart || !rangeDraftEnd ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.92)",
+                    background:
+                      !rangeDraftStart || !rangeDraftEnd
+                        ? "rgba(255,255,255,0.06)"
+                        : "rgba(79,220,255,0.10)",
+                    color:
+                      !rangeDraftStart || !rangeDraftEnd
+                        ? "rgba(255,255,255,0.55)"
+                        : "rgba(255,255,255,0.92)",
                     fontWeight: 950,
                     cursor: !rangeDraftStart || !rangeDraftEnd ? "not-allowed" : "pointer",
-                    boxShadow: !rangeDraftStart || !rangeDraftEnd ? "none" : "0 0 18px rgba(79,220,255,0.14)",
+                    boxShadow:
+                      !rangeDraftStart || !rangeDraftEnd
+                        ? "none"
+                        : "0 0 18px rgba(79,220,255,0.14)",
                   }}
                 >
                   aplicar
@@ -697,13 +732,12 @@ export default function HeaderDashboard({
   rightSlot,
   initialPreset = "hoje",
   onDateChange,
-  onQueryChange, // ✅ novo: já manda query pro /api/dashboard
+  onQueryChange,
 }: {
   title: string;
   subtitle: string;
   rightSlot?: React.ReactNode;
   initialPreset?: PresetKey;
-
   onDateChange?: (sel: DateSelection) => void;
   onQueryChange?: (q: DashboardQuery, qs: string, sel: DateSelection) => void;
 }) {
@@ -742,7 +776,14 @@ export default function HeaderDashboard({
         }}
       >
         <div style={{ minWidth: 260 }}>
-          <div style={{ color: "rgba(255,255,255,0.96)", fontWeight: 980, fontSize: 28, letterSpacing: 0.2 }}>
+          <div
+            style={{
+              color: "rgba(255,255,255,0.96)",
+              fontWeight: 980,
+              fontSize: 28,
+              letterSpacing: 0.2,
+            }}
+          >
             {title}
           </div>
 
