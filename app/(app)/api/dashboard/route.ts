@@ -18,8 +18,14 @@ const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
 const OP_CUTOFF_HOUR = 6; // 06:00
 const TZ_OFFSET_MIN = -180; // Brasil (-03:00)
 
-// ✅ (por enquanto fixo)
+// ✅ por enquanto fixo
 const COMPANY_ID = "default";
+
+// ✅ evita teto de 1000
+const PAGE_SIZE = 1000;
+
+const ORDER_SELECT =
+  "id, created_at, platform, service_type, payment_method, r_final";
 
 // =========================
 // helpers
@@ -209,9 +215,6 @@ function groupAgg(rows: OrderRow[], key: (r: OrderRow) => string) {
 
 /**
  * ✅ soma contagens do cash_sessions (jsonb)
- * Suporta:
- * - { qty, value } / { qtd, valor }
- * - { quantity, denomination }  ✅ (SEU FORMATO ATUAL)
  */
 function sumCounts(counts: any): number {
   if (!Array.isArray(counts)) return 0;
@@ -233,8 +236,7 @@ function sumCounts(counts: any): number {
   return Number.isFinite(total) ? total : 0;
 }
 
-// ✅ monta lista fixa (sempre retorna todos, mesmo zerado)
-// pct em % (0–100)
+// ✅ monta lista fixa
 function fixedList(
   labels: string[],
   agg: { key: string; pedidos: number; valor: number }[],
@@ -250,6 +252,38 @@ function fixedList(
     const pct = faturamento > 0 ? (valor / faturamento) * 100 : 0;
     return { label, pedidos, valor, pct };
   });
+}
+
+/**
+ * ✅ busca TODOS os pedidos do período em lotes
+ */
+async function fetchAllOrdersInRange(startUtcISO: string, endUtcISO: string) {
+  const allRows: OrderRow[] = [];
+  let from = 0;
+
+  while (true) {
+    const to = from + PAGE_SIZE - 1;
+
+    const { data, error } = await supabase
+      .from("orders")
+      .select(ORDER_SELECT)
+      .gte("created_at", startUtcISO)
+      .lt("created_at", endUtcISO)
+      .order("created_at", { ascending: false })
+      .range(from, to);
+
+    if (error) {
+      return { data: null, error };
+    }
+
+    const batch = (data || []) as OrderRow[];
+    allRows.push(...batch);
+
+    if (!batch.length || batch.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+
+  return { data: allRows, error: null };
 }
 
 export async function GET(req: NextRequest) {
@@ -270,12 +304,10 @@ export async function GET(req: NextRequest) {
     // =========================
     // ✅ ORDERS
     // =========================
-    const { data: orders, error: ordersError } = await supabase
-      .from("orders")
-      .select("id, created_at, platform, service_type, payment_method, r_final")
-      .gte("created_at", range.startUtcISO)
-      .lt("created_at", range.endUtcISO)
-      .order("created_at", { ascending: false });
+    const { data: orders, error: ordersError } = await fetchAllOrdersInRange(
+      range.startUtcISO,
+      range.endUtcISO
+    );
 
     if (ordersError) {
       return NextResponse.json({ ok: false, error: ordersError.message }, { status: 500 });
@@ -288,7 +320,7 @@ export async function GET(req: NextRequest) {
     const ticket_medio = pedidos > 0 ? faturamento / pedidos : 0;
 
     // =========================
-    // ✅ CASH ENTRIES (despesas do período) + ✅ SAÍDAS ITENS
+    // ✅ CASH ENTRIES
     // =========================
     const { data: cashRows, error: cashError } = await supabase
       .from("cash_entries")
@@ -405,15 +437,12 @@ export async function GET(req: NextRequest) {
     }
 
     // =========================
-    // ✅ agrupamentos (dinâmicos)
+    // ✅ agrupamentos
     // =========================
     const byPagamentoDyn = groupAgg(rows, (r) => normPay(r.payment_method) || "OUTROS");
     const byPlataformaDyn = groupAgg(rows, (r) => normPlatform(r.platform) || "OUTROS");
     const byAtendimentoDyn = groupAgg(rows, (r) => normService(r.service_type) || "OUTROS");
 
-    // =========================
-    // ✅ listas FIXAS (mobile)
-    // =========================
     const FIX_PAY = ["DINHEIRO", "PIX", "PAGAMENTO ONLINE", "CARTÃO DE CRÉDITO", "CARTÃO DE DÉBITO"];
     const FIX_PLAT = ["AIQFOME", "BALCÃO", "WHATSAPP", "DELIVERY MUCH", "IFOOD"];
     const FIX_ATT = ["ENTREGA", "RETIRADA", "MESAS"];
@@ -437,7 +466,6 @@ export async function GET(req: NextRequest) {
       })),
     };
 
-    // ✅ FORMATO QUE TEU page.tsx ESPERA
     const conferencia_caixa = {
       caixa_inicial: conferencia.caixaInicial,
       caixa_final: conferencia.caixaFinal,
@@ -460,23 +488,16 @@ export async function GET(req: NextRequest) {
         despesas,
         despesas_pct,
       },
-
-      // ✅ compat antigo
       conferencia,
-
-      // ✅ novo (p/ CardCaixa via page.tsx)
       conferencia_caixa,
-
       ranking_pagamentos,
       pedidos_por_plataforma,
       pedidos_por_atendimento,
-
-      // ✅ SAÍDAS (para o Saidas.tsx)
       saidas: {
         items: saidasItems,
       },
-
       groups,
+      total_orders: pedidos,
     });
   } catch (e: any) {
     return NextResponse.json(
