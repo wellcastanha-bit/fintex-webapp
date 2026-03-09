@@ -16,13 +16,21 @@ const supabase = createClient(
 const OP_CUTOFF_HOUR = 6; // 06:00
 const TZ_OFFSET_MIN = -180; // Brasil (-03:00)
 
+// ✅ evita teto de 1000 registros por consulta
+const PAGE_SIZE = 1000;
+
+const ORDER_SELECT =
+  "id, created_at, status, responsavel, customer_name, platform, service_type, bairros, taxa_entrega, payment_method, r_inicial, r_final, troco";
+
 function num(v: any) {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 }
+
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
+
 function toISODateLocalFromMs(ms: number) {
   const d = new Date(ms);
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
@@ -39,7 +47,13 @@ function addDaysISO(dateISO: string, days: number) {
  * Converte "data local" + hora local em UTC ISO (com Z) usando offset fixo.
  * local = UTC + offset  => UTC = local - offset
  */
-function localDateTimeToUTCISO(dateISO: string, hour: number, minute = 0, second = 0, ms = 0) {
+function localDateTimeToUTCISO(
+  dateISO: string,
+  hour: number,
+  minute = 0,
+  second = 0,
+  ms = 0
+) {
   const [yy, mm, dd] = dateISO.split("-").map((x) => Number(x));
   const localMs = Date.UTC(yy, (mm || 1) - 1, dd || 1, hour, minute, second, ms);
   const utcMs = localMs - TZ_OFFSET_MIN * 60 * 1000;
@@ -78,7 +92,9 @@ function currentOperationalAnchorISO() {
   const nowLocalMs = nowUtc + TZ_OFFSET_MIN * 60 * 1000;
   const nowLocal = new Date(nowLocalMs);
 
-  let anchorISO = `${nowLocal.getFullYear()}-${pad2(nowLocal.getMonth() + 1)}-${pad2(nowLocal.getDate())}`;
+  let anchorISO = `${nowLocal.getFullYear()}-${pad2(nowLocal.getMonth() + 1)}-${pad2(
+    nowLocal.getDate()
+  )}`;
 
   // se ainda é antes do cutoff, âncora é ontem
   if (nowLocal.getHours() < OP_CUTOFF_HOUR) {
@@ -97,10 +113,7 @@ function normalizePlatform(v: any): string | null {
   const raw = String(v ?? "").trim();
   if (!raw) return null;
 
-  const up = raw
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toUpperCase();
+  const up = raw.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
 
   if (up.includes("BALCAO")) return "BALCÃO";
   return raw;
@@ -114,10 +127,7 @@ function normalizeServiceType(v: any): string | null {
   const raw = String(v ?? "").trim();
   if (!raw) return null;
 
-  const up = raw
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toUpperCase();
+  const up = raw.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
 
   if (up === "MESA" || up === "MESAS" || up.includes("MESA")) return "MESAS";
   return raw;
@@ -132,10 +142,7 @@ function normalizePaymentMethod(v: any): string | null {
   const raw = String(v ?? "").trim();
   if (!raw) return null;
 
-  const up = raw
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toUpperCase();
+  const up = raw.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
 
   if (up === "DINHEIRO") return "DINHEIRO";
   if (up === "PIX") return "PIX";
@@ -152,6 +159,38 @@ function normalizePaymentMethod(v: any): string | null {
   return null;
 }
 
+/**
+ * ✅ Busca todos os pedidos em lotes para não travar em 1000
+ */
+async function fetchAllOrdersInRange(startISO: string, endISO: string) {
+  const allRows: any[] = [];
+  let from = 0;
+
+  while (true) {
+    const to = from + PAGE_SIZE - 1;
+
+    const { data, error } = await supabase
+      .from("orders")
+      .select(ORDER_SELECT)
+      .gte("created_at", startISO)
+      .lt("created_at", endISO)
+      .order("created_at", { ascending: false })
+      .range(from, to);
+
+    if (error) {
+      return { data: null, error };
+    }
+
+    const batch = data ?? [];
+    allRows.push(...batch);
+
+    if (batch.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+
+  return { data: allRows, error: null };
+}
+
 /* =========================
    GET
 ========================= */
@@ -160,7 +199,7 @@ export async function GET(req: Request) {
 
   const mode = searchParams.get("mode"); // "caixa" | null
 
-  // ✅ NOVO: período (range) por dia operacional
+  // ✅ período (range) por dia operacional
   // Ex: /api/orders?from=2026-02-10&to=2026-02-16
   const fromISO = searchParams.get("from") || null;
   const toISO = searchParams.get("to") || null;
@@ -180,16 +219,7 @@ export async function GET(req: Request) {
 
   const { startISO, endISO } = range;
 
-  let q = supabase
-    .from("orders")
-    .select(
-      "id, created_at, status, responsavel, customer_name, platform, service_type, bairros, taxa_entrega, payment_method, r_inicial, r_final, troco"
-    )
-    .order("created_at", { ascending: false });
-
-  q = q.gte("created_at", startISO).lt("created_at", endISO);
-
-  const { data, error } = await q;
+  const { data, error } = await fetchAllOrdersInRange(startISO, endISO);
 
   if (error) {
     return NextResponse.json(
@@ -225,6 +255,7 @@ export async function GET(req: Request) {
     return NextResponse.json({
       ok: true,
       items,
+      total: items.length,
       op: { anchorISO, fromISO, toISO, startISO, endISO },
     });
   }
@@ -265,6 +296,7 @@ export async function GET(req: Request) {
   return NextResponse.json({
     ok: true,
     rows,
+    total: rows.length,
     op: { anchorISO, fromISO, toISO, startISO, endISO },
   });
 }
@@ -304,7 +336,11 @@ export async function POST(req: Request) {
     // r_final NÃO envia (calculado no banco)
   };
 
-  const { data, error } = await supabase.from("orders").insert(payload).select("*").single();
+  const { data, error } = await supabase
+    .from("orders")
+    .insert(payload)
+    .select(ORDER_SELECT)
+    .single();
 
   if (error) {
     return NextResponse.json(
@@ -324,7 +360,35 @@ export async function POST(req: Request) {
     );
   }
 
-  return NextResponse.json({ ok: true, row: data });
+  const row = {
+    id: String(data.id),
+    created_at: String(data.created_at),
+
+    status: data.status ?? null,
+    responsavel: data.responsavel ?? null,
+
+    customer_name: data.customer_name ?? null,
+    r_final: data.r_final ?? 0,
+
+    cliente_nome: data.customer_name ?? null,
+    valor_final: data.r_final ?? 0,
+
+    platform: data.platform ?? null,
+    service_type: data.service_type ?? null,
+    bairros: data.bairros ?? null,
+    taxa_entrega: data.taxa_entrega ?? 0,
+    payment_method: data.payment_method ?? null,
+    r_inicial: data.r_inicial ?? 0,
+    troco: data.troco ?? 0,
+
+    plataforma: data.platform ?? null,
+    atendimento: data.service_type ?? null,
+    bairro: data.bairros ?? null,
+    pagamento: data.payment_method ?? null,
+    valor_pago: data.r_inicial ?? 0,
+  };
+
+  return NextResponse.json({ ok: true, row });
 }
 
 /* =========================
@@ -353,9 +417,7 @@ export async function PATCH(req: Request) {
     .from("orders")
     .update(update)
     .eq("id", id)
-    .select(
-      "id, created_at, status, responsavel, customer_name, platform, service_type, bairros, taxa_entrega, payment_method, r_inicial, r_final, troco"
-    )
+    .select(ORDER_SELECT)
     .single();
 
   if (error) {

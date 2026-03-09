@@ -80,7 +80,7 @@ export default function PedidosTable(props: Props) {
         position: "relative",
         zIndex: 1,
         background: "linear-gradient(180deg, #ffffff 0%, #ffffff 60%, #f0f7fb 100%)",
-        border: '"none"',
+        border: '"none',
         boxShadow: hoverTable ? "0 18px 60px rgba(2,12,27,0.14)" : "0 16px 52px rgba(2,12,27,0.10)",
         transition: "border 160ms ease, box-shadow 160ms ease",
       }}
