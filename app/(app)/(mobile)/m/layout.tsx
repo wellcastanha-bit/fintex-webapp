@@ -66,7 +66,7 @@ export default function MobileLayout({ children }: { children: React.ReactNode }
                 color: "#ffffff",
               }}
             >
-              Sistema de gestão Pizza Blu
+              Sistema de gestão Fatias de Pizza 
             </div>
 
             <div

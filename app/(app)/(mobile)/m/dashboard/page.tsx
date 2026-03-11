@@ -1,16 +1,9 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Entradas from "./entradas";
 import Saidas from "./saidas";
 import CardCaixa from "./conferenciacaixa";
-
-/* =========================================================
-   FINtex Mobile - Dashboard (PAGE)
-   ✅ Seletor + inputs de data ficam AQUI
-   ✅ Fetch /api/dashboard fica AQUI
-   ✅ Renderiza o "quebra-cabeça" das partes
-========================================================= */
 
 const BG_PAGE =
   "radial-gradient(1200px 700px at 20% 0%, rgba(79,220,255,0.12), transparent 55%), radial-gradient(900px 520px at 80% 10%, rgba(79,220,255,0.10), transparent 60%), linear-gradient(180deg, rgba(4,19,40,1), rgba(2,11,24,1) 58%, rgba(2,9,20,1))";
@@ -19,37 +12,37 @@ const CARD_BG =
   "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))";
 const AQUA_LINE = "rgba(79,220,255,0.18)";
 
-/* ========================= Utils ========================= */
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
+
 function toISODate(d: Date) {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
-/** Dia operacional 06:00 */
 function opDateISO(now = new Date(), cutoffHour = 6) {
   const d = new Date(now);
   if (d.getHours() < cutoffHour) d.setDate(d.getDate() - 1);
   return toISODate(d);
 }
+
 function addDaysISO(iso: string, deltaDays: number) {
   const [y, m, d] = iso.split("-").map(Number);
   const dt = new Date(y, m - 1, d);
   dt.setDate(dt.getDate() + deltaDays);
   return toISODate(dt);
 }
+
 function clampISO(iso: string) {
   const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
   return m ? `${m[1]}-${m[2]}-${m[3]}` : "";
 }
+
 function isoToBR(iso: string) {
   const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!m) return iso;
   return `${m[3]}/${m[2]}/${m[1]}`;
 }
-
-/* ========================= Shell UI ========================= */
 
 function Shell({
   children,
@@ -114,8 +107,6 @@ function TitleRow({
     </div>
   );
 }
-
-/* ========================= Seletor ========================= */
 
 type PeriodKey =
   | "hoje"
@@ -246,27 +237,31 @@ function DateInput({
   );
 }
 
-/* ========================= API Types ========================= */
-
-type ApiRow = { label: string; pedidos: number; valor: number; pct: number };
+type ApiRow = {
+  label: string;
+  pedidos: number;
+  valor: number;
+  pct: number;
+};
 
 export type ApiMobileDashboard = {
   ok: boolean;
-  range?: { label: string };
+  range?: { label?: string };
   kpis?: {
-    pedidos: number;
-    faturamento: number;
-    ticket_medio: number;
-    margem: number;
-    lucro_estimado: number;
-    despesas: number;
+    pedidos?: number;
+    faturamento?: number;
+    ticket_medio?: number;
+    margem?: number;
+    lucro_estimado?: number;
+    despesas?: number;
+    despesas_pct?: number;
+    fatias_vendidas?: number;
+    valor_fatias?: number;
+    preco_unitario_fatia?: number;
   };
   ranking_pagamentos?: ApiRow[];
   pedidos_por_plataforma?: ApiRow[];
   pedidos_por_atendimento?: ApiRow[];
-  error?: string;
-
-  // ✅ CORRETO: backend retorna "conferencia" (camelCase)
   conferencia?: {
     status?: "OK" | "ATENÇÃO";
     caixaInicial?: number;
@@ -275,19 +270,29 @@ export type ApiMobileDashboard = {
     caixaFinal?: number;
     quebra?: number;
   };
-
-  saidas?: any;
+  saidas?: {
+    items?: Array<{
+      id: string;
+      type?: string | null;
+      category?: string | null;
+      description?: string | null;
+      amount: number;
+      occurred_at?: string | null;
+      created_at?: string | null;
+      op_date?: string | null;
+      company_id?: string | null;
+    }>;
+  };
+  error?: string;
 };
-
-/* ========================= Page ========================= */
 
 export default function MobileDashboardPage() {
   const opToday = useMemo(() => opDateISO(new Date(), 6), []);
 
   const [period, setPeriod] = useState<PeriodKey>("hoje");
-  const [singleDate, setSingleDate] = useState<string>(opToday);
-  const [rangeFrom, setRangeFrom] = useState<string>(addDaysISO(opToday, -6));
-  const [rangeTo, setRangeTo] = useState<string>(opToday);
+  const [singleDate, setSingleDate] = useState(opToday);
+  const [rangeFrom, setRangeFrom] = useState(addDaysISO(opToday, -6));
+  const [rangeTo, setRangeTo] = useState(opToday);
 
   const { queryQS, localLabel } = useMemo(() => {
     const end = opToday;
@@ -320,59 +325,72 @@ export default function MobileDashboardPage() {
 
   const [loading, setLoading] = useState(false);
   const [api, setApi] = useState<ApiMobileDashboard | null>(null);
-  const [err, setErr] = useState<string>("");
+  const [err, setErr] = useState("");
+
+  const queryRef = useRef(queryQS);
+  const fetchingRef = useRef(false);
+
+  useEffect(() => {
+    queryRef.current = queryQS;
+  }, [queryQS]);
 
   useEffect(() => {
     let alive = true;
 
-    async function load() {
+    async function load(forceQuery?: string) {
+      if (fetchingRef.current) return;
+
+      fetchingRef.current = true;
       setLoading(true);
       setErr("");
 
       try {
-        const res = await fetch(`/api/dashboard?${queryQS}&view=mobile`, {
+        const qs = forceQuery ?? queryRef.current;
+        const res = await fetch(`/api/dashboard?${qs}&view=mobile`, {
           method: "GET",
-          headers: { "content-type": "application/json" },
           cache: "no-store",
         });
 
         const j = (await res.json()) as ApiMobileDashboard;
 
         if (!res.ok || !j?.ok) {
-          const msg = j?.error || `Falha ao carregar dashboard (${res.status})`;
-          throw new Error(msg);
+          throw new Error(j?.error || `Falha ao carregar dashboard (${res.status})`);
         }
 
         if (alive) setApi(j);
-      } catch (e: any) {
+      } catch (e: unknown) {
         if (alive) {
           setApi(null);
-          setErr(e?.message || "Erro ao carregar dashboard");
+          setErr(e instanceof Error ? e.message : "Erro ao carregar dashboard");
         }
       } finally {
+        fetchingRef.current = false;
         if (alive) setLoading(false);
       }
     }
 
-    load();
+    load(queryQS);
+
+    const intervalId = window.setInterval(() => {
+      load(queryRef.current);
+    }, 5000);
+
     return () => {
       alive = false;
+      window.clearInterval(intervalId);
     };
   }, [queryQS]);
 
   const headerLabel = api?.range?.label || localLabel;
-
-  // ✅ pega "conferencia" do backend
   const conf = api?.conferencia;
 
   return (
     <>
       <div style={{ display: "grid", gap: 12 }}>
-        {/* HEADER (dropdown no header) */}
         <Shell style={{ background: BG_PAGE }}>
           <TitleRow
             title="Dashboard"
-            subtitle={`Pizza Blu • ${headerLabel || new Date().toLocaleDateString("pt-BR")}`}
+            subtitle={`Fatias de Pizza • ${headerLabel || new Date().toLocaleDateString("pt-BR")}`}
             right={
               <PeriodSelect
                 value={period}
@@ -391,15 +409,16 @@ export default function MobileDashboardPage() {
           />
 
           <div style={{ marginTop: 12, fontSize: 11, opacity: 0.78, fontWeight: 900 }}>
-            {loading ? "Carregando…" : err ? `Erro: ${err}` : ""}
+            {loading ? "" : err ? `Erro: ${err}` : ""}
           </div>
         </Shell>
 
-        {/* CONTROLES (fora do header) */}
         {period === "uma_data" ? (
           <Shell>
             <div style={{ display: "grid", gap: 8 }}>
-              <div style={{ fontSize: 12, fontWeight: 950, opacity: 0.82 }}>Selecionar data</div>
+              <div style={{ fontSize: 12, fontWeight: 950, opacity: 0.82 }}>
+                Selecionar data
+              </div>
               <DateInput value={singleDate} onChange={setSingleDate} />
             </div>
           </Shell>
@@ -408,16 +427,29 @@ export default function MobileDashboardPage() {
         {period === "um_periodo" ? (
           <Shell>
             <div style={{ display: "grid", gap: 10 }}>
-              <div style={{ fontSize: 12, fontWeight: 950, opacity: 0.82 }}>Selecionar período</div>
+              <div style={{ fontSize: 12, fontWeight: 950, opacity: 0.82 }}>
+                Selecionar período
+              </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, minWidth: 0 }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: 10,
+                  minWidth: 0,
+                }}
+              >
                 <div style={{ display: "grid", gap: 6, minWidth: 0 }}>
-                  <div style={{ fontSize: 11, fontWeight: 950, opacity: 0.75 }}>De:</div>
+                  <div style={{ fontSize: 11, fontWeight: 950, opacity: 0.75 }}>
+                    De:
+                  </div>
                   <DateInput value={rangeFrom} onChange={setRangeFrom} />
                 </div>
 
                 <div style={{ display: "grid", gap: 6, minWidth: 0 }}>
-                  <div style={{ fontSize: 11, fontWeight: 950, opacity: 0.75 }}>Até:</div>
+                  <div style={{ fontSize: 11, fontWeight: 950, opacity: 0.75 }}>
+                    Até:
+                  </div>
                   <DateInput value={rangeTo} onChange={setRangeTo} />
                 </div>
               </div>
@@ -425,24 +457,34 @@ export default function MobileDashboardPage() {
           </Shell>
         ) : null}
 
-        {/* ENTRADAS */}
         <Entradas api={api} localLabel={localLabel} />
 
-        {/* SAÍDAS */}
-        <Saidas faturamento={api?.kpis?.faturamento ?? 0} data={api?.saidas} />
+       <Saidas
+  faturamento={api?.kpis?.faturamento ?? 0}
+  data={{
+    items: (api?.saidas?.items || []).map((item) => ({
+      id: item.id,
+      type: item.type ?? "",
+      category: item.category ?? "",
+      description: item.description ?? "",
+      amount: Number(item.amount ?? 0),
+      occurred_at: item.occurred_at ?? "",
+      created_at: item.created_at ?? "",
+      op_date: item.op_date ?? "",
+      company_id: item.company_id ?? "",
+    })),
+  }}
+/>
 
-        {/* ✅ CONFERÊNCIA DE CAIXA (AGORA BATE COM O BACKEND) */}
         <CardCaixa
           caixaInicial={conf?.caixaInicial ?? 0}
           caixaFinal={conf?.caixaFinal ?? 0}
           entradasDinheiro={conf?.entradasDinheiro ?? 0}
           saidasDinheiro={conf?.saidas ?? 0}
-          // provaReal: deixa o CardCaixa calcular
           quebraCaixa={conf?.quebra ?? 0}
         />
       </div>
 
-      {/* ✅ REMOVE ÍCONE DO CALENDÁRIO */}
       <style jsx global>{`
         input.fintex-date::-webkit-calendar-picker-indicator {
           opacity: 0;

@@ -7,7 +7,6 @@ export default function Page() {
   const [orders, setOrders] = useState<OrdersSourceItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
-  // evita requests concorrentes
   const busyRef = useRef(false);
 
   async function loadOrders() {
@@ -18,8 +17,11 @@ export default function Page() {
       const r = await fetch("/api/orders", { cache: "no-store" });
       const j = await r.json().catch(() => null);
 
-      if (r.ok && j?.ok) setOrders((j.rows ?? []) as OrdersSourceItem[]);
-      else setOrders([]);
+      if (r.ok && j?.ok) {
+        setOrders((j.rows ?? []) as OrdersSourceItem[]);
+      } else {
+        setOrders([]);
+      }
     } catch (e) {
       console.error("[PedidosPage] load failed:", e);
       setOrders([]);
@@ -30,15 +32,25 @@ export default function Page() {
   }
 
   useEffect(() => {
-    loadOrders(); // primeira carga
+    loadOrders();
 
-    // ✅ “quase tempo real” sem Supabase Realtime
-    const t = setInterval(() => {
+    const handleFocus = () => {
       loadOrders();
-    }, 2000);
+    };
 
-    return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        loadOrders();
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
   }, []);
 
   async function onRequestDelete(id: string) {
@@ -57,7 +69,6 @@ export default function Page() {
         return;
       }
 
-      // ✅ recarrega do backend
       await loadOrders();
     } catch (e) {
       console.error("[PedidosPage] delete exception:", e);

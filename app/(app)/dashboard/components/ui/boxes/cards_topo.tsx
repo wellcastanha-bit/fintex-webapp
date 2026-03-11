@@ -1,4 +1,3 @@
-// app/dashboard/components/boxes/cards_topo.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -64,7 +63,7 @@ function MetricCard({
         borderRadius: 18,
         border: `1px solid ${hover ? m.bdHover : m.bd}`,
         background: hover
-          ? `linear-gradient(180deg, rgba(255,255,255,0.10), rgba(0,0,0,0.24))`
+          ? "linear-gradient(180deg, rgba(255,255,255,0.10), rgba(0,0,0,0.24))"
           : `linear-gradient(180deg, ${m.innerTop}, ${m.innerBot})`,
         boxShadow: hover
           ? `0 0 0 1px rgba(255,255,255,0.06),
@@ -81,7 +80,14 @@ function MetricCard({
         filter: hover ? "brightness(1.06)" : "brightness(1)",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+        }}
+      >
         <div
           style={{
             color: m.tag,
@@ -94,7 +100,14 @@ function MetricCard({
           {title}
         </div>
 
-        <div style={{ color: m.tag, fontWeight: 950, fontSize: 15, letterSpacing: 0.2 }} />
+        <div
+          style={{
+            color: m.tag,
+            fontWeight: 950,
+            fontSize: 15,
+            letterSpacing: 0.2,
+          }}
+        />
       </div>
 
       <div
@@ -109,27 +122,30 @@ function MetricCard({
         {value}
       </div>
 
-      <div style={{ marginTop: 8, color: "rgb(248, 246, 246)", fontWeight: 850, fontSize: 15 }}>{sub}</div>
+      <div
+        style={{
+          marginTop: 8,
+          color: "rgb(248, 246, 246)",
+          fontWeight: 850,
+          fontSize: 15,
+        }}
+      >
+        {sub}
+      </div>
     </div>
   );
 }
 
-// =========================
-// ✅ Agora puxa DESPESAS do backend (Supabase) AUTOMATICAMENTE
-// - sem tenant / sem company_id
-// - margem FIXA em 30% (por enquanto)
-// =========================
 export type DashboardKpis = {
   pedidos: number;
   faturamento: number;
   ticket_medio: number;
-
-  // ⚠️ backend pode mandar qualquer coisa aqui, mas NO FRONT vamos travar 30% por enquanto
-  margem: number; // fração (0.3 -> 30%)
+  margem: number;
   lucro_estimado: number;
-
   despesas: number;
-  despesas_pct: number; // fração (0.085 -> 8,5%)
+  despesas_pct: number;
+  fatias_vendidas?: number;
+  valor_fatias?: number;
 };
 
 type ApiKpisResponse =
@@ -137,60 +153,58 @@ type ApiKpisResponse =
   | { kpis: DashboardKpis }
   | { ok: boolean; kpis: DashboardKpis }
   | { data: DashboardKpis }
-  | any;
+  | Record<string, unknown>;
 
 function pickKpisFromApi(data: ApiKpisResponse): DashboardKpis | null {
   if (!data) return null;
-  const k =
-    (data?.kpis as DashboardKpis) ??
-    (data?.data as DashboardKpis) ??
-    (typeof data?.pedidos === "number" ? (data as DashboardKpis) : null);
 
-  if (!k) return null;
+  const direct =
+    typeof (data as DashboardKpis)?.pedidos === "number"
+      ? (data as DashboardKpis)
+      : null;
 
-  const safe: DashboardKpis = {
-    pedidos: Number(k.pedidos ?? 0) || 0,
-    faturamento: Number(k.faturamento ?? 0) || 0,
-    ticket_medio: Number(k.ticket_medio ?? 0) || 0,
+  const nestedKpis =
+    (data as { kpis?: DashboardKpis })?.kpis ??
+    (data as { data?: DashboardKpis })?.data ??
+    direct;
 
-    // vai ser sobrescrito abaixo (30% fixo)
-    margem: Number(k.margem ?? 0) || 0,
-    lucro_estimado: Number(k.lucro_estimado ?? 0) || 0,
+  if (!nestedKpis) return null;
 
-    despesas: Number(k.despesas ?? 0) || 0,
-    despesas_pct: Number(k.despesas_pct ?? 0) || 0,
+  return {
+    pedidos: Number(nestedKpis.pedidos ?? 0) || 0,
+    faturamento: Number(nestedKpis.faturamento ?? 0) || 0,
+    ticket_medio: Number(nestedKpis.ticket_medio ?? 0) || 0,
+    margem: Number(nestedKpis.margem ?? 0) || 0,
+    lucro_estimado: Number(nestedKpis.lucro_estimado ?? 0) || 0,
+    despesas: Number(nestedKpis.despesas ?? 0) || 0,
+    despesas_pct: Number(nestedKpis.despesas_pct ?? 0) || 0,
+    fatias_vendidas:
+      nestedKpis.fatias_vendidas == null
+        ? undefined
+        : Number(nestedKpis.fatias_vendidas) || 0,
+    valor_fatias:
+      nestedKpis.valor_fatias == null
+        ? undefined
+        : Number(nestedKpis.valor_fatias) || 0,
   };
-
-  return safe;
 }
 
 export default function CardsTopo({
-  // novo (preferido)
   kpis,
-
-  // ✅ opcional: se teu dashboard já tem filtro de data, passa a dateISO (YYYY-MM-DD)
   dateISO,
-
-  // ✅ opcional: se tua rota do dashboard for diferente, passa aqui
   apiPath,
-
-  // fallback (se o pai ainda não foi migrado)
   pedidos,
   ticketMedio,
   faturamento,
   lucroEstimado,
-  // margemPct NÃO vamos usar (fica travada em 30%), mas mantém pra compatibilidade
   margemPct,
   despesas,
   despesasPct,
-
   fmtBRL,
 }: {
   kpis?: DashboardKpis;
-
   dateISO?: string;
   apiPath?: string;
-
   pedidos?: number;
   ticketMedio?: number;
   faturamento?: number;
@@ -198,11 +212,9 @@ export default function CardsTopo({
   margemPct?: number;
   despesas?: number;
   despesasPct?: number;
-
   fmtBRL: (v: number) => string;
 }) {
   const [kpisDb, setKpisDb] = useState<DashboardKpis | null>(null);
-  const [status, setStatus] = useState<"idle" | "ok" | "err">("idle");
 
   useEffect(() => {
     if (kpis) return;
@@ -210,82 +222,126 @@ export default function CardsTopo({
     let alive = true;
 
     async function load() {
-      setStatus("idle");
       try {
         const base = apiPath?.trim() || "/api/dashboard";
-        const u = new URL(base, typeof window !== "undefined" ? window.location.origin : "http://localhost");
-        u.searchParams.set("kpis", "1");
+        const u = new URL(
+          base,
+          typeof window !== "undefined"
+            ? window.location.origin
+            : "http://localhost"
+        );
+
         if (dateISO) u.searchParams.set("date", dateISO);
 
-        const res = await fetch(u.toString(), { method: "GET", cache: "no-store" });
+        const res = await fetch(u.toString(), {
+          method: "GET",
+          cache: "no-store",
+        });
+
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
         const data = await res.json();
         const picked = pickKpisFromApi(data);
-        if (!picked) throw new Error("kpis inválido");
 
+        if (!picked) throw new Error("kpis inválido");
         if (!alive) return;
+
         setKpisDb(picked);
-        setStatus("ok");
       } catch {
         if (!alive) return;
         setKpisDb(null);
-        setStatus("err");
       }
     }
 
     load();
+
     return () => {
       alive = false;
     };
   }, [kpis, apiPath, dateISO]);
 
-  // ✅ prioridade: kpis prop > kpisDb > props soltas
-// ✅ prioridade: kpis prop > kpisDb > props soltas
-const K = kpis ?? kpisDb;
+  const K = kpis ?? kpisDb;
 
-// pedidos/faturamento com fallback
-const p = (K?.pedidos ?? pedidos ?? 0);
-const fat = (K?.faturamento ?? faturamento ?? 0);
+  const totalPedidos = Number(K?.pedidos ?? pedidos ?? 0) || 0;
+  const totalFaturamento = Number(K?.faturamento ?? faturamento ?? 0) || 0;
+  const ticketMedioFinal =
+    Number(K?.ticket_medio ?? 0) ||
+    (totalPedidos > 0
+      ? totalFaturamento / totalPedidos
+      : Number(ticketMedio ?? 0) || 0);
 
-// ✅ ticket: se não vier do backend, calcula
-const tm = (K?.ticket_medio ?? (p > 0 ? fat / p : 0));
+  const margemFinal =
+    Number(K?.margem ?? margemPct ?? 30) || 0;
 
-// ✅ MARGEM FIXA (30%)
-const FIXED_MARGIN = 0.3;
-const margemPctUI = FIXED_MARGIN * 100;
+  const lucroFinal =
+    Number(K?.lucro_estimado ?? lucroEstimado ?? 0) ||
+    totalFaturamento * (margemFinal / 100);
 
-// ✅ lucro estimado = faturamento * 30%
-const luc = fat * FIXED_MARGIN;
+  const despesasFinal = Number(K?.despesas ?? despesas ?? 0) || 0;
+  const despesasPctFinal =
+    Number(K?.despesas_pct ?? despesasPct ?? 0) || 0;
 
-// ✅ despesas vindo do supabase (via route do dashboard) com fallback
-const desp = (K?.despesas ?? despesas ?? 0);
+  const totalFatias =
+    K?.fatias_vendidas != null
+      ? Number(K.fatias_vendidas) || 0
+      : totalPedidos;
 
-// ✅ % despesas no faturamento (se backend não mandou, calcula)
-const despPctNum =
-  (K?.despesas_pct != null ? K.despesas_pct * 100 : (fat > 0 ? (desp / fat) * 100 : 0));
-
-const subDesp =
-  status === "idle"
-    ? "Despesa Total:"
-    : status === "err"
-    ? "Falha ao buscar despesas"
-    : `${despPctNum.toFixed(1).replace(".", ",")}% do faturamento`;
-
+  const valorFatias =
+    K?.valor_fatias != null
+      ? Number(K.valor_fatias) || 0
+      : totalFaturamento;
 
   return (
     <div style={{ padding: 18, paddingTop: 0 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
-        <MetricCard title="PEDIDOS" value={String(p)} sub={`Ticket médio: ${fmtBRL(tm)}`} accent="gray" />
-        <MetricCard title="FATURAMENTO" value={fmtBRL(fat)} sub="Receita Total:" accent="aqua" />
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+          gap: 12,
+        }}
+      >
+        <MetricCard
+          title="PEDIDOS"
+          value={String(totalPedidos)}
+          sub={`Ticket médio: ${fmtBRL(ticketMedioFinal)}`}
+          accent="gray"
+        />
+
+        <MetricCard
+          title="FATURAMENTO"
+          value={fmtBRL(totalFaturamento)}
+          sub="Receita total"
+          accent="aqua"
+        />
+
         <MetricCard
           title="LUCRO ESTIMADO"
-          value={fmtBRL(luc)}
-          sub={`Margem: ${margemPctUI.toFixed(1).replace(".", ",")}%`}
+          value={fmtBRL(lucroFinal)}
+          sub={`Margem: ${margemFinal.toFixed(1).replace(".", ",")}%`}
           accent="green"
         />
-        <MetricCard title="DESPESAS" value={fmtBRL(desp)} sub={subDesp} accent="red" />
+
+        <MetricCard
+          title="FATIAS"
+          value={fmtBRL(valorFatias)}
+          sub={`${totalFatias} fatias vendidas`}
+          accent="green"
+        />
       </div>
+
+      {(despesasFinal > 0 || despesasPctFinal > 0) && (
+        <div
+          style={{
+            marginTop: 10,
+            color: "rgba(255,255,255,0.58)",
+            fontWeight: 800,
+            fontSize: 12,
+            paddingLeft: 2,
+          }}
+        >
+          Despesas: {fmtBRL(despesasFinal)} · {despesasPctFinal.toFixed(1).replace(".", ",")}%
+        </div>
+      )}
     </div>
   );
 }

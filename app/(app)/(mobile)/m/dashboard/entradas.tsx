@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo } from "react";
-import type { ApiMobileDashboard } from "./page";
+
 
 /* =========================================================
    FINtex Mobile - Dashboard (ENTRADAS)
@@ -342,7 +342,7 @@ export default function Entradas({
   api,
   localLabel,
 }: {
-  api: ApiMobileDashboard | null;
+api: any;
   localLabel: string;
 }) {
   const d = useMemo(() => {
@@ -409,12 +409,12 @@ export default function Entradas({
             sub1={`Margem: ${pct(d.margem)}`}
             accent="green"
           />
-          <TopCard
-            title="Despesas"
-            value={fmtBRL(d.despesas)}
-            sub1="Despesa Total:"
-            accent="red"
-          />
+        <TopCard
+  title="Fatias"
+  value={fmtBRL(api?.kpis?.valor_fatias ?? 0)}
+  sub1={`${api?.kpis?.fatias_vendidas ?? 0} fatias vendidas`}
+  accent="green"
+/>
         </div>
       </Shell>
 

@@ -1,18 +1,16 @@
 "use client";
 
-/* =========================================
-   app/pedidos/pedidosclient.tsx
-   ✅ FRONT BURRO (SEM TENANT / SEM LS / SEM WINDOW)
-   ✅ Agora: permite editar RESPONSÁVEL e STATUS
-   ✅ Ao editar na tabela: PATCH /api/orders -> Supabase
-   ✅ Atualiza a linha na hora (optimista) e mantém na tela
-   ✅ NOVO: FILTRA POR DIA OPERACIONAL (cutoff 05:00)
-========================================= */
-
 import React, { useMemo, useRef, useState } from "react";
 
 import { COLS, type Row, type ColDef } from "./pedidos.constant";
-import { ensureAllCols, matchLoose, matchMotoboy, matchPlataforma, normKey, parseBRLToNumber } from "./pedidos.utils";
+import {
+  ensureAllCols,
+  matchLoose,
+  matchMotoboy,
+  matchPlataforma,
+  normKey,
+  parseBRLToNumber,
+} from "./pedidos.utils";
 
 import PedidosHeader from "./pedidosheader";
 import PedidosTable from "./pedidostable";
@@ -20,7 +18,7 @@ import PedidosConfirmDeleteModal from "./pedidosconfirmdeletemodal";
 
 export type OrdersSourceItem = {
   id: string;
-  created_at: string; // ISO (backend)
+  created_at: string;
 
   status?: string | null;
   responsavel?: string | null;
@@ -36,6 +34,8 @@ export type OrdersSourceItem = {
   valor_pago?: number | null;
   valor_final?: number | null;
   troco?: number | null;
+
+  fatias?: number | null;
 };
 
 function pad2(n: number) {
@@ -47,10 +47,9 @@ function dayFromISO(iso: string) {
   if (Number.isNaN(d.getTime())) return "-";
   const dd = pad2(d.getDate());
   const mm = pad2(d.getMonth() + 1);
-  return `${dd}/${mm}`; // ✅ dd/mm
+  return `${dd}/${mm}`;
 }
 
-// ✅ HH:mm a partir do created_at (local do navegador)
 function hourFromISO(iso: string) {
   const d = new Date(iso);
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
@@ -72,6 +71,11 @@ function toNumSafe(v: any) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function toIntSafe(v: any) {
+  const n = Math.floor(Number(v));
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
 function toISODateLocal(d: Date) {
   const y = d.getFullYear();
   const m = pad2(d.getMonth() + 1);
@@ -80,7 +84,7 @@ function toISODateLocal(d: Date) {
 }
 
 function getOperationalWindow(opts?: { cutoffHour?: number; operationalISO?: string }) {
-  const cutoffHour = typeof opts?.cutoffHour === "number" ? opts!.cutoffHour : 5;
+  const cutoffHour = typeof opts?.cutoffHour === "number" ? opts.cutoffHour : 5;
 
   const start = new Date();
   if (opts?.operationalISO) {
@@ -118,6 +122,7 @@ function mapOrderToRow(o: OrdersSourceItem): Row {
   const hora = hourFromISO(createdAt);
 
   const cliente = String(o?.cliente_nome ?? "");
+  const fatias = toIntSafe(o?.fatias ?? 0);
   const plataforma = String(o?.plataforma ?? "").toUpperCase();
   const atendimento = String(o?.atendimento ?? "").toUpperCase();
 
@@ -140,6 +145,7 @@ function mapOrderToRow(o: OrdersSourceItem): Row {
     [normKey("DATA")]: data,
     [normKey("HORA")]: hora,
     [normKey("CLIENTE")]: cliente,
+    [normKey("FATIAS")]: fatias,
     [normKey("PLATAFORMA")]: plataforma,
     [normKey("ATENDIMENTO")]: atendimento,
 
@@ -161,11 +167,16 @@ type Props = {
   onRequestDelete?: (id: string) => Promise<void> | void;
   highlightIdsFromParent?: string[];
   filterOperationalDay?: boolean;
-  operationalISO?: string; // YYYY-MM-DD (âncora)
-  cutoffHour?: number; // ✅ opcional (padrão 5)
+  operationalISO?: string;
+  cutoffHour?: number;
 };
 
-type PatchPayload = { id: string; responsavel?: string | null; status?: string | null };
+type PatchPayload = {
+  id: string;
+  responsavel?: string | null;
+  status?: string | null;
+  fatias?: number | null;
+};
 
 async function patchOrder(payload: PatchPayload) {
   const res = await fetch("/api/orders", {
@@ -188,7 +199,6 @@ export default function PedidosClient({
 }: Props) {
   const [q, setQ] = useState<string>("");
 
-  // ✅ fonte filtrada pelo dia operacional (ANTES de mapear)
   const sourceOrders = useMemo(() => {
     const list = orders || [];
     if (!filterOperationalDay) return list;
@@ -224,7 +234,9 @@ export default function PedidosClient({
 
   const minWidth = useMemo(() => COLS.reduce((a: number, c: ColDef) => a + c.w, 0), []);
 
-  const lastSentRef = useRef<Map<string, { responsavel: string; status: string }>>(new Map());
+  const lastSentRef = useRef<
+    Map<string, { responsavel: string; status: string; fatias: number }>
+  >(new Map());
 
   function schedulePatchForDiff(prevRows: Row[], nextRows: Row[]) {
     const prevById = new Map<string, Row>();
@@ -242,19 +254,33 @@ export default function PedidosClient({
 
       const prResp = String(pr?.[normKey("RESPONSÁVEL")] ?? "");
       const prStatus = String(pr?.[normKey("STATUS")] ?? "");
+      const prFatias = toIntSafe(pr?.[normKey("FATIAS")] ?? 0);
 
       const nrResp = String(nr?.[normKey("RESPONSÁVEL")] ?? "");
       const nrStatus = String(nr?.[normKey("STATUS")] ?? "");
+      const nrFatias = toIntSafe(nr?.[normKey("FATIAS")] ?? 0);
 
       const changedResp = prResp !== nrResp;
       const changedStatus = prStatus !== nrStatus;
+      const changedFatias = prFatias !== nrFatias;
 
-      if (!changedResp && !changedStatus) continue;
+      if (!changedResp && !changedStatus && !changedFatias) continue;
 
       const last = lastSentRef.current.get(id);
-      if (last && last.responsavel === nrResp && last.status === nrStatus) continue;
+      if (
+        last &&
+        last.responsavel === nrResp &&
+        last.status === nrStatus &&
+        last.fatias === nrFatias
+      ) {
+        continue;
+      }
 
-      lastSentRef.current.set(id, { responsavel: nrResp, status: nrStatus });
+      lastSentRef.current.set(id, {
+        responsavel: nrResp,
+        status: nrStatus,
+        fatias: nrFatias,
+      });
 
       (async () => {
         try {
@@ -262,6 +288,7 @@ export default function PedidosClient({
             id,
             responsavel: nrResp || null,
             status: nrStatus || null,
+            fatias: nrFatias,
           });
         } catch (e) {
           console.error("[PedidosClient] PATCH failed:", e);
@@ -285,10 +312,29 @@ export default function PedidosClient({
   const base = useMemo(() => {
     let rws = rowsState;
 
-    if (responsavelFilter) rws = rws.filter((r: Row) => matchMotoboy(r?.[normKey("RESPONSÁVEL")], responsavelFilter));
-    if (plataformaFilter) rws = rws.filter((r: Row) => matchPlataforma(r?.[normKey("PLATAFORMA")], plataformaFilter));
-    if (atendimentoFilter) rws = rws.filter((r: Row) => matchLoose(r?.[normKey("ATENDIMENTO")], atendimentoFilter));
-    if (pagamentoFilter) rws = rws.filter((r: Row) => matchLoose(r?.[normKey("FORMA DE PAGAMENTO")], pagamentoFilter));
+    if (responsavelFilter) {
+      rws = rws.filter((r: Row) =>
+        matchMotoboy(r?.[normKey("RESPONSÁVEL")], responsavelFilter)
+      );
+    }
+
+    if (plataformaFilter) {
+      rws = rws.filter((r: Row) =>
+        matchPlataforma(r?.[normKey("PLATAFORMA")], plataformaFilter)
+      );
+    }
+
+    if (atendimentoFilter) {
+      rws = rws.filter((r: Row) =>
+        matchLoose(r?.[normKey("ATENDIMENTO")], atendimentoFilter)
+      );
+    }
+
+    if (pagamentoFilter) {
+      rws = rws.filter((r: Row) =>
+        matchLoose(r?.[normKey("FORMA DE PAGAMENTO")], pagamentoFilter)
+      );
+    }
 
     return rws;
   }, [rowsState, responsavelFilter, plataformaFilter, atendimentoFilter, pagamentoFilter]);
@@ -314,9 +360,12 @@ export default function PedidosClient({
       const vInicial = parseBRLToNumber(r?.[normKey("R$ INICIAL")]);
       const vTaxa = parseBRLToNumber(r?.[normKey("TAXA DE ENTREGA")]);
 
-      const forma = (r?.[normKey("FORMA DE PAGAMENTO")] ?? "").toString().trim().toUpperCase();
-      if (forma === "DINHEIRO" && typeof vInicial === "number") repassePizzaria += vInicial;
+      const forma = (r?.[normKey("FORMA DE PAGAMENTO")] ?? "")
+        .toString()
+        .trim()
+        .toUpperCase();
 
+      if (forma === "DINHEIRO" && typeof vInicial === "number") repassePizzaria += vInicial;
       if (typeof vTaxa === "number") valorEntregas += vTaxa;
 
       const atend = (r?.[normKey("ATENDIMENTO")] ?? "").toString().trim().toUpperCase();
@@ -329,17 +378,26 @@ export default function PedidosClient({
   const autosomasGerais = useMemo(() => {
     let qtdePedidos = 0;
     let valorTotal = 0;
+    let totalFatias = 0;
 
     for (const r of base) {
       qtdePedidos += 1;
+
       const v = parseBRLToNumber(r?.[normKey("R$ INICIAL")]);
       if (typeof v === "number") valorTotal += v;
+
+      totalFatias += toIntSafe(r?.[normKey("FATIAS")] ?? 0);
     }
 
-    return { qtdePedidos, valorTotal };
+    return { qtdePedidos, valorTotal, totalFatias };
   }, [base]);
 
-  const hasAnyFilter = !!(responsavelFilter || plataformaFilter || atendimentoFilter || pagamentoFilter);
+  const hasAnyFilter = !!(
+    responsavelFilter ||
+    plataformaFilter ||
+    atendimentoFilter ||
+    pagamentoFilter
+  );
 
   function openConfirmDelete(id: string) {
     if (!id) return;
@@ -371,7 +429,12 @@ export default function PedidosClient({
 
   return (
     <div style={{ width: "100%", minWidth: 0, boxSizing: "border-box", position: "relative" }}>
-      <PedidosConfirmDeleteModal open={confirmOpen} busy={confirmBusy} onClose={closeConfirm} onConfirm={confirmDelete} />
+      <PedidosConfirmDeleteModal
+        open={confirmOpen}
+        busy={confirmBusy}
+        onClose={closeConfirm}
+        onConfirm={confirmDelete}
+      />
 
       <PedidosHeader
         q={q}

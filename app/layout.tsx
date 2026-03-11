@@ -2,7 +2,7 @@ import "./globals.css";
 import type { Metadata, Viewport } from "next";
 
 export const metadata: Metadata = {
-  title: "Gestão Pizza Blu - Fintex",
+  title: "Gestão Fatias de Pizza - Fintex",
   description: "Gestão financeira inteligente para bares e restaurantes",
 
   manifest: "/site.webmanifest",

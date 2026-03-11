@@ -15,7 +15,7 @@ type Tab = "DASHBOARD" | "RELATORIO";
 
 
 const PASS_ENV = (process.env.NEXT_PUBLIC_DASH_PASS || "").trim();
-const DASH_PASS = PASS_ENV || "wendel20"; // 
+const DASH_PASS = PASS_ENV || "senhafintex"; // 
 
 function TabBtn({
   active,

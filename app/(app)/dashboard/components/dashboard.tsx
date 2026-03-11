@@ -1,20 +1,33 @@
 // app/(app)/dashboard/components/dashboard.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fmtBRL } from "./ui/card_shell";
 
-import HeaderDashboard, { type DashboardQuery, buildDashboardQS } from "./ui/boxes/header_dashboard";
+import HeaderDashboard, {
+  type DashboardQuery,
+  buildDashboardQS,
+} from "./ui/boxes/header_dashboard";
 import CardsTopo, { type DashboardKpis } from "./ui/boxes/cards_topo";
-import RankingPagamentos, { type RankingPagamentoRow } from "./ui/boxes/ranking_pagamentos";
-import PedidosPorPlataforma, { type PlataformaRow } from "./ui/boxes/pedidos_por_plataforma";
-import PedidosPorAtendimento, { type AtendimentoRow } from "./ui/boxes/pedidos_por_atendimento";
-import ConferenciaCaixa, { type ConferenciaData } from "./ui/boxes/conferencia_caixa";
-import DespesasDetalhadas, { type DespesaRow } from "./ui/boxes/despesas_detalhadas";
+import RankingPagamentos, {
+  type RankingPagamentoRow,
+} from "./ui/boxes/ranking_pagamentos";
+import PedidosPorPlataforma, {
+  type PlataformaRow,
+} from "./ui/boxes/pedidos_por_plataforma";
+import PedidosPorAtendimento, {
+  type AtendimentoRow,
+} from "./ui/boxes/pedidos_por_atendimento";
+import ConferenciaCaixa, {
+  type ConferenciaData,
+} from "./ui/boxes/conferencia_caixa";
+import DespesasDetalhadas, {
+  type DespesaRow,
+} from "./ui/boxes/despesas_detalhadas";
 
 type ApiDashboard = {
   ok: boolean;
-  range?: any;
+  range?: unknown;
   kpis?: {
     pedidos: number;
     faturamento: number;
@@ -23,6 +36,8 @@ type ApiDashboard = {
     lucro_estimado: number;
     despesas: number;
     despesas_pct: number;
+    fatias_vendidas?: number;
+    valor_fatias?: number;
   };
   conferencia_caixa?: {
     caixa_inicial: number;
@@ -147,7 +162,7 @@ function buildDespesasDetalhadas(
   const baseOrder = ["Logística", "Variáveis", "Insumos", "Marketing", "Mão de Obra"];
   const acc = new Map<string, number>();
 
-  for (const item of items || []) {
+  for (const item of items) {
     const key = mapDespesaLabel(item.category, item.description);
     acc.set(key, (acc.get(key) || 0) + Number(item.amount || 0));
   }
@@ -159,8 +174,25 @@ function buildDespesasDetalhadas(
   });
 }
 
+function makeDashboardKpis(data?: Partial<Record<string, number>>): DashboardKpis {
+  return {
+    pedidos: Number(data?.pedidos ?? 0),
+    faturamento: Number(data?.faturamento ?? 0),
+    ticket_medio: Number(data?.ticket_medio ?? 0),
+    margem: Number(data?.margem ?? 30),
+    lucro_estimado: Number(data?.lucro_estimado ?? 0),
+    despesas: Number(data?.despesas ?? 0),
+    despesas_pct: Number(data?.despesas_pct ?? 0),
+    fatias_vendidas: Number(data?.fatias_vendidas ?? 0),
+    valor_fatias: Number(data?.valor_fatias ?? 0),
+  };
+}
+
 export default function DashboardView() {
-  const mockTitle = useMemo(() => "Pizza Blu · 30/01/2026 · Sexta-feira", []);
+  const mockTitle = useMemo(
+    () => "Fatias de Pizza · 30/01/2026 · Sexta-feira",
+    []
+  );
 
   const basePlataformas = useMemo<PlataformaRow[]>(
     () => [
@@ -205,18 +237,30 @@ export default function DashboardView() {
   );
 
   const [subtitle] = useState<string>(mockTitle);
+  const [currentQuery, setCurrentQuery] = useState<DashboardQuery>({
+    kind: "period",
+    period: "hoje",
+  } as DashboardQuery);
 
-  const [kpis, setKpis] = useState<DashboardKpis>({
-    pedidos: 0,
-    faturamento: 0,
-    ticket_medio: 0,
-    margem: 30,
-    lucro_estimado: 0,
-    despesas: 0,
-    despesas_pct: 0,
-  });
+  const currentQueryRef = useRef<DashboardQuery>(currentQuery);
+  const fetchingRef = useRef(false);
 
-  const [rankingPagamentos, setRankingPagamentos] = useState<RankingPagamentoRow[]>(basePagamentos);
+  const [kpis, setKpis] = useState<DashboardKpis>(
+    makeDashboardKpis({
+      pedidos: 0,
+      faturamento: 0,
+      ticket_medio: 0,
+      margem: 30,
+      lucro_estimado: 0,
+      despesas: 0,
+      despesas_pct: 0,
+      fatias_vendidas: 0,
+      valor_fatias: 0,
+    })
+  );
+
+  const [rankingPagamentos, setRankingPagamentos] =
+    useState<RankingPagamentoRow[]>(basePagamentos);
   const [porPlataforma, setPorPlataforma] = useState<PlataformaRow[]>(basePlataformas);
   const [porAtendimento, setPorAtendimento] = useState<AtendimentoRow[]>(baseAtendimentos);
 
@@ -229,144 +273,172 @@ export default function DashboardView() {
     quebra: 0,
   });
 
-  const [despesasDetalhadas, setDespesasDetalhadas] = useState<DespesaRow[]>(baseDespesas);
+  const [despesasDetalhadas, setDespesasDetalhadas] =
+    useState<DespesaRow[]>(baseDespesas);
   const [loading, setLoading] = useState(false);
 
-  async function fetchDashboard(q: DashboardQuery) {
-    const qs = buildDashboardQS(q);
+  const fetchDashboard = useCallback(
+    async (q: DashboardQuery) => {
+      if (fetchingRef.current) return;
 
-    setLoading(true);
-    try {
-      const dashRes = await fetch(`/api/dashboard?${qs}`, { cache: "no-store" });
-      const json = (await dashRes.json()) as ApiDashboard;
+      fetchingRef.current = true;
+      setLoading(true);
 
-      if (!json?.ok) {
-        console.error("dashboard api error:", json?.error || "unknown");
-        return;
-      }
+      try {
+        const qs = buildDashboardQS(q);
+        const dashRes = await fetch(`/api/dashboard?${qs}`, { cache: "no-store" });
+        const json = (await dashRes.json()) as ApiDashboard;
 
-      const nextKpis: DashboardKpis = {
-        pedidos: Number(json.kpis?.pedidos ?? 0),
-        faturamento: Number(json.kpis?.faturamento ?? 0),
-        ticket_medio: Number(json.kpis?.ticket_medio ?? 0),
-        margem: Number(json.kpis?.margem ?? 30),
-        lucro_estimado: Number(json.kpis?.lucro_estimado ?? 0),
-        despesas: Number(json.kpis?.despesas ?? 0),
-        despesas_pct: Number(json.kpis?.despesas_pct ?? 0),
-      };
+        if (!json?.ok) {
+          console.error("dashboard api error:", json?.error || "unknown");
+          return;
+        }
 
-      setKpis(nextKpis);
-
-      if (json.conferencia_caixa) {
-        setConferencia({
-          status: json.conferencia_caixa.status ?? "OK",
-          caixaInicial: Number(json.conferencia_caixa.caixa_inicial ?? 0),
-          entradasDinheiro: Number(json.conferencia_caixa.entradas_dinheiro ?? 0),
-          saidas: Number(json.conferencia_caixa.saidas_dinheiro ?? 0),
-          caixaFinal: Number(json.conferencia_caixa.caixa_final ?? 0),
-          quebra: Number(json.conferencia_caixa.quebra_caixa ?? 0),
+        const nextKpis = makeDashboardKpis({
+          pedidos: json.kpis?.pedidos,
+          faturamento: json.kpis?.faturamento,
+          ticket_medio: json.kpis?.ticket_medio,
+          margem: json.kpis?.margem,
+          lucro_estimado: json.kpis?.lucro_estimado,
+          despesas: json.kpis?.despesas,
+          despesas_pct: json.kpis?.despesas_pct,
+          fatias_vendidas: json.kpis?.fatias_vendidas,
+          valor_fatias: json.kpis?.valor_fatias,
         });
-      } else {
-        setConferencia({
-          status: "OK",
-          caixaInicial: 0,
-          entradasDinheiro: 0,
-          saidas: 0,
-          caixaFinal: 0,
-          quebra: 0,
+
+        setKpis(nextKpis);
+
+        if (json.conferencia_caixa) {
+          setConferencia({
+            status: json.conferencia_caixa.status ?? "OK",
+            caixaInicial: Number(json.conferencia_caixa.caixa_inicial ?? 0),
+            entradasDinheiro: Number(json.conferencia_caixa.entradas_dinheiro ?? 0),
+            saidas: Number(json.conferencia_caixa.saidas_dinheiro ?? 0),
+            caixaFinal: Number(json.conferencia_caixa.caixa_final ?? 0),
+            quebra: Number(json.conferencia_caixa.quebra_caixa ?? 0),
+          });
+        } else {
+          setConferencia({
+            status: "OK",
+            caixaInicial: 0,
+            entradasDinheiro: 0,
+            saidas: 0,
+            caixaFinal: 0,
+            quebra: 0,
+          });
+        }
+
+        const payBackend: RankingPagamentoRow[] = (json.ranking_pagamentos || []).map((x) => ({
+          key: x.label,
+          pedidos: Number(x.pedidos ?? 0),
+          valor: Number(x.valor ?? 0),
+          pct: Number(x.pct ?? 0),
+        }));
+
+        const mergedPay: RankingPagamentoRow[] = basePagamentos.map((base) => {
+          const found = payBackend.find((x) => normKey(x.key) === normKey(base.key));
+          return found ? { ...base, ...found } : base;
         });
-      }
 
-      const payBackend = (json.ranking_pagamentos || []).map((x) => ({
-        key: x.label,
-        pedidos: Number(x.pedidos ?? 0),
-        valor: Number(x.valor ?? 0),
-        pct: Number(x.pct ?? 0),
-      }));
-
-      const mergedPay: RankingPagamentoRow[] = basePagamentos.map((base) => {
-        const found = payBackend.find((x) => normKey(x.key) === normKey(base.key));
-        return found ? { ...base, ...found } : base;
-      });
-
-      const extrasPay = payBackend.filter(
-        (x) => !basePagamentos.some((b) => normKey(b.key) === normKey(x.key))
-      ) as RankingPagamentoRow[];
-
-      setRankingPagamentos([...mergedPay, ...extrasPay]);
-
-      const platBackend = (json.pedidos_por_plataforma || []).map((x) => ({
-        key: x.label,
-        pedidos: Number(x.pedidos ?? 0),
-        valor: Number(x.valor ?? 0),
-        pct: Number(x.pct ?? 0),
-      }));
-
-      const mergedPlat: PlataformaRow[] = basePlataformas.map((base) => {
-        const found = platBackend.find((x) => normKey(x.key) === normKey(base.key));
-        if (!found) return base;
-        return { ...base, ...found, accent: base.accent ?? pickAccentPlataforma(base.key) };
-      });
-
-      const extrasPlat = platBackend
-        .filter((x) => !basePlataformas.some((b) => normKey(b.key) === normKey(x.key)))
-        .map(
-          (x) =>
-            ({
-              ...x,
-              accent: pickAccentPlataforma(x.key),
-            }) as PlataformaRow
+        const extrasPay: RankingPagamentoRow[] = payBackend.filter(
+          (x) => !basePagamentos.some((b) => normKey(b.key) === normKey(x.key))
         );
 
-      setPorPlataforma([...mergedPlat, ...extrasPlat]);
+        setRankingPagamentos([...mergedPay, ...extrasPay]);
 
-      const attBackend = (json.pedidos_por_atendimento || []).map((x) => ({
-        key: x.label,
-        pedidos: Number(x.pedidos ?? 0),
-        valor: Number(x.valor ?? 0),
-        pct: Number(x.pct ?? 0),
-      }));
+        const platBackend = (json.pedidos_por_plataforma || []).map((x) => ({
+          key: x.label,
+          pedidos: Number(x.pedidos ?? 0),
+          valor: Number(x.valor ?? 0),
+          pct: Number(x.pct ?? 0),
+        }));
 
-      const mergedAtt: AtendimentoRow[] = baseAtendimentos.map((base) => {
-        const found = attBackend.find((x) => normKey(x.key) === normKey(base.key));
-        if (!found) return base;
-        return { ...base, ...found, accent: base.accent ?? pickAccentAtendimento(base.key) };
-      });
+        const mergedPlat: PlataformaRow[] = basePlataformas.map((base) => {
+          const found = platBackend.find((x) => normKey(x.key) === normKey(base.key));
+          if (!found) return base;
+          return {
+            ...base,
+            ...found,
+            accent: base.accent ?? pickAccentPlataforma(base.key),
+          };
+        });
 
-      const extrasAtt = attBackend
-        .filter((x) => !baseAtendimentos.some((b) => normKey(b.key) === normKey(x.key)))
-        .map(
-          (x) =>
-            ({
-              ...x,
-              accent: pickAccentAtendimento(x.key),
-            }) as AtendimentoRow
+        const extrasPlat: PlataformaRow[] = platBackend
+          .filter((x) => !basePlataformas.some((b) => normKey(b.key) === normKey(x.key)))
+          .map((x) => ({
+            ...x,
+            accent: pickAccentPlataforma(x.key),
+          })) as PlataformaRow[];
+
+        setPorPlataforma([...mergedPlat, ...extrasPlat]);
+
+        const attBackend = (json.pedidos_por_atendimento || []).map((x) => ({
+          key: x.label,
+          pedidos: Number(x.pedidos ?? 0),
+          valor: Number(x.valor ?? 0),
+          pct: Number(x.pct ?? 0),
+        }));
+
+        const mergedAtt: AtendimentoRow[] = baseAtendimentos.map((base) => {
+          const found = attBackend.find((x) => normKey(x.key) === normKey(base.key));
+          if (!found) return base;
+          return {
+            ...base,
+            ...found,
+            accent: base.accent ?? pickAccentAtendimento(base.key),
+          };
+        });
+
+        const extrasAtt: AtendimentoRow[] = attBackend
+          .filter((x) => !baseAtendimentos.some((b) => normKey(b.key) === normKey(x.key)))
+          .map((x) => ({
+            ...x,
+            accent: pickAccentAtendimento(x.key),
+          })) as AtendimentoRow[];
+
+        setPorAtendimento([...mergedAtt, ...extrasAtt]);
+
+        setDespesasDetalhadas(
+          buildDespesasDetalhadas(json.saidas?.items || [], Number(nextKpis.despesas ?? 0))
         );
-
-      setPorAtendimento([...mergedAtt, ...extrasAtt]);
-
-      setDespesasDetalhadas(
-        buildDespesasDetalhadas(json.saidas?.items || [], nextKpis.despesas || 0)
-      );
-    } catch (e: any) {
-      console.error("fetch dashboard failed:", e?.message || e);
-    } finally {
-      setLoading(false);
-    }
-  }
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e);
+        console.error("fetch dashboard failed:", message);
+      } finally {
+        fetchingRef.current = false;
+        setLoading(false);
+      }
+    },
+    [baseAtendimentos, basePagamentos, basePlataformas]
+  );
 
   useEffect(() => {
-    fetchDashboard({ kind: "period", period: "hoje" } as any);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    currentQueryRef.current = currentQuery;
+    fetchDashboard(currentQuery);
+  }, [currentQuery, fetchDashboard]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      fetchDashboard(currentQueryRef.current);
+    }, 5000);
+
+    return () => window.clearInterval(id);
+  }, [fetchDashboard]);
 
   return (
-    <div style={{ width: "100%", height: "100%", overflow: "auto", background: "transparent" }}>
+    <div
+      style={{
+        width: "100%",
+        height: "100%",
+        overflow: "auto",
+        background: "transparent",
+      }}
+    >
       <HeaderDashboard
         title="Dashboard"
         subtitle={subtitle}
         initialPreset="hoje"
-        onQueryChange={(q) => fetchDashboard(q)}
+        onQueryChange={(q) => setCurrentQuery(q)}
       />
 
       <CardsTopo kpis={kpis} fmtBRL={fmtBRL} />
@@ -386,7 +458,14 @@ export default function DashboardView() {
         </div>
 
         {loading ? (
-          <div style={{ marginTop: 12, color: "rgba(255,255,255,0.55)", fontWeight: 900, fontSize: 12 }}>
+          <div
+            style={{
+              marginTop: 12,
+              color: "rgba(255,255,255,0.55)",
+              fontWeight: 900,
+              fontSize: 12,
+            }}
+          >
             atualizando dados...
           </div>
         ) : null}

@@ -1,6 +1,5 @@
 // =========================================
 // app/pedidos/pedidos.constant.ts
-// ✅ troca MÊS -> HORA
 // =========================================
 
 export type Row = Record<string, any>;
@@ -14,8 +13,13 @@ export type ColDef = {
 
 export const COLS: readonly ColDef[] = [
   { key: "DATA", label: "DATA", w: 90, type: "text" },
-  { key: "HORA", label: "HORA", w: 90, type: "text" }, // ✅ antes era MÊS
+  { key: "HORA", label: "HORA", w: 90, type: "text" },
+
   { key: "CLIENTE", label: "CLIENTE", w: 260, type: "text" },
+
+  // ✅ NOVA COLUNA
+  { key: "FATIAS", label: "FATIAS", w: 110, type: "text" },
+
   { key: "PLATAFORMA", label: "PLATAFORMA", w: 160, type: "text" },
   { key: "ATENDIMENTO", label: "ATENDIMENTO", w: 160, type: "text" },
   { key: "R$ INICIAL", label: "R$ INICIAL", w: 120, type: "money" },
@@ -39,4 +43,8 @@ export const RESPONSAVEIS = [
   "Motoboy 06",
 ] as const;
 
-export const STATUS_OPTS = ["EM PRODUÇÃO", "ENTREGUE", "FATIAS DE PIZZA"] as const;
+export const STATUS_OPTS = [
+  "EM PRODUÇÃO",
+  "ENTREGUE",
+  "FATIAS DE PIZZA",
+] as const;

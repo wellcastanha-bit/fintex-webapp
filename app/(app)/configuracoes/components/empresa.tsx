@@ -14,7 +14,7 @@ export default function Empresa() {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <div style={{ gridColumn: "1 / -1" }}>
           <FieldLabel>Nome da Empresa</FieldLabel>
-          <Field placeholder="Pizza Blu" value={nome} onChange={setNome} />
+          <Field placeholder="Fatias de Pizza " value={nome} onChange={setNome} />
         </div>
 
         <div>

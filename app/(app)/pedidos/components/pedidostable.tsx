@@ -3,7 +3,13 @@
 import React, { useMemo, useState } from "react";
 import { Trash2 } from "lucide-react";
 
-import { COLS, RESPONSAVEIS, STATUS_OPTS, type Row, type ColDef } from "./pedidos.constant";
+import {
+  COLS,
+  RESPONSAVEIS,
+  STATUS_OPTS,
+  type Row,
+  type ColDef,
+} from "./pedidos.constant";
 import { brl, normKey } from "./pedidos.utils";
 import {
   Arrow,
@@ -28,22 +34,37 @@ type Props = {
 const INK = "#0b2c4a";
 const INK_SOFT = "rgba(11,44,74,0.72)";
 const BORDER = "#cfe7ef";
-const BORDER_STRONG = "#2fc1e0";
 
 export default function PedidosTable(props: Props) {
-  const { filtered, minWidth, highlightSetRef, setHighlightIds, confirmBusy, onRequestDelete, setRows } = props;
+  const {
+    filtered,
+    minWidth,
+    highlightSetRef,
+    setHighlightIds,
+    confirmBusy,
+    onRequestDelete,
+    setRows,
+  } = props;
 
   const [hoverTable, setHoverTable] = useState(false);
   const [hoverHeader, setHoverHeader] = useState(false);
   const [trashHoverId, setTrashHoverId] = useState<string>("");
 
-  const totalW = useMemo(() => COLS.reduce((a: number, c: ColDef) => a + c.w, 0), []);
+  const totalW = useMemo(
+    () => COLS.reduce((a: number, c: ColDef) => a + c.w, 0),
+    []
+  );
 
-  const trashBtnStyle = (hover: boolean, disabled: boolean): React.CSSProperties => ({
+  const trashBtnStyle = (
+    hover: boolean,
+    disabled: boolean
+  ): React.CSSProperties => ({
     width: 36,
     height: 36,
     borderRadius: 14,
-    border: hover ? "2px solid rgba(220,38,38,0.55)" : "2px solid rgba(11,44,74,0.14)",
+    border: hover
+      ? "2px solid rgba(220,38,38,0.55)"
+      : "2px solid rgba(11,44,74,0.14)",
     background: hover
       ? "linear-gradient(180deg, #ffffff 0%, #ffffff 55%, rgba(220,38,38,0.10) 100%)"
       : "linear-gradient(180deg, #ffffff 0%, #ffffff 60%, #f0f7fb 100%)",
@@ -67,6 +88,23 @@ export default function PedidosTable(props: Props) {
     backgroundClip: "padding-box",
   };
 
+  const inputStyle: React.CSSProperties = {
+    width: "100%",
+    height: 42,
+    borderRadius: 14,
+    border: `2px solid ${BORDER}`,
+    background: "linear-gradient(180deg, #ffffff 0%, #ffffff 60%, #f0f7fb 100%)",
+    color: INK,
+    fontWeight: 800,
+    fontSize: 15,
+    textAlign: "center",
+    padding: "0 12px",
+    outline: "none",
+    boxShadow: "none",
+    WebkitAppearance: "none",
+    appearance: "none",
+  };
+
   return (
     <div
       onMouseEnter={() => setHoverTable(true)}
@@ -79,9 +117,12 @@ export default function PedidosTable(props: Props) {
         boxSizing: "border-box",
         position: "relative",
         zIndex: 1,
-        background: "linear-gradient(180deg, #ffffff 0%, #ffffff 60%, #f0f7fb 100%)",
-        border: '"none',
-        boxShadow: hoverTable ? "0 18px 60px rgba(2,12,27,0.14)" : "0 16px 52px rgba(2,12,27,0.10)",
+        background:
+          "linear-gradient(180deg, #ffffff 0%, #ffffff 60%, #f0f7fb 100%)",
+        border: "none",
+        boxShadow: hoverTable
+          ? "0 18px 60px rgba(2,12,27,0.14)"
+          : "0 16px 52px rgba(2,12,27,0.10)",
         transition: "border 160ms ease, box-shadow 160ms ease",
       }}
     >
@@ -103,7 +144,10 @@ export default function PedidosTable(props: Props) {
           >
             {COLS.map((c: ColDef) => {
               const k = normKey(c.key);
-              const isEditable = k === normKey("RESPONSÁVEL") || k === normKey("STATUS");
+              const isEditableHeader =
+                k === normKey("RESPONSÁVEL") ||
+                k === normKey("STATUS") ||
+                k === normKey("FATIAS");
 
               return (
                 <div
@@ -123,7 +167,7 @@ export default function PedidosTable(props: Props) {
                   }}
                 >
                   <span>{c.label}</span>
-                  {isEditable && <Arrow tint="aqua" />}
+                  {isEditableHeader && <Arrow tint="aqua" />}
                 </div>
               );
             })}
@@ -132,7 +176,9 @@ export default function PedidosTable(props: Props) {
 
         {filtered.map((r: Row, idx: number) => {
           const rowId = String(r.__ID || "");
-          const isHighlighted = rowId ? highlightSetRef.current.has(rowId) : false;
+          const isHighlighted = rowId
+            ? highlightSetRef.current.has(rowId)
+            : false;
 
           const applyRowHover = (el: HTMLDivElement) => {
             el.style.background = "rgba(47,193,224,0.08)";
@@ -166,7 +212,9 @@ export default function PedidosTable(props: Props) {
                 borderBottom: "1px solid rgba(11,44,74,0.10)",
                 color: INK,
                 transition: "background 160ms ease, box-shadow 160ms ease",
-                boxShadow: isHighlighted ? "inset 0 0 0 2px rgba(47,193,224,0.22)" : "none",
+                boxShadow: isHighlighted
+                  ? "inset 0 0 0 2px rgba(47,193,224,0.22)"
+                  : "none",
                 cursor: "default",
               }}
               onMouseEnter={(e) => {
@@ -216,11 +264,15 @@ export default function PedidosTable(props: Props) {
 
                 const k = normKey(c.key);
                 const raw = r?.[k];
-                const txt = c.type === "money" ? brl(raw) : (raw ?? "").toString().trim() || "-";
+                const txt =
+                  c.type === "money"
+                    ? brl(raw)
+                    : (raw ?? "").toString().trim() || "-";
 
                 const isResp = k === normKey("RESPONSÁVEL");
                 const isStatus = k === normKey("STATUS");
-                const isEditable = isResp || isStatus;
+                const isFatias = k === normKey("FATIAS");
+                const isEditable = isResp || isStatus || isFatias;
 
                 const tint = isStatus ? statusTint(txt) : "aqua";
 
@@ -245,7 +297,36 @@ export default function PedidosTable(props: Props) {
                     }}
                   >
                     {!isEditable ? (
-                      <span style={{ color: INK, opacity: txt === "-" ? 0.55 : 1 }}>{txt}</span>
+                      <span style={{ color: INK, opacity: txt === "-" ? 0.55 : 1 }}>
+                        {txt}
+                      </span>
+                    ) : isFatias ? (
+                      <div style={{ width: "100%", position: "relative" }}>
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          inputMode="numeric"
+                          value={raw ?? ""}
+                          onChange={(e) => {
+                            const id = rowId;
+                            if (!id) return;
+
+                            const value = e.target.value;
+                            const next = value === "" ? "" : Number(value);
+
+                            setRows((cur: Row[]) =>
+                              cur.map((rr: Row) => {
+                                if (String(rr.__ID || "") !== id) return rr;
+                                const copy: Row = { ...rr };
+                                copy[normKey("FATIAS")] = next;
+                                return copy;
+                              })
+                            );
+                          }}
+                          style={inputStyle}
+                        />
+                      </div>
                     ) : (
                       <div style={{ width: "100%", position: "relative" }}>
                         <div
@@ -279,11 +360,20 @@ export default function PedidosTable(props: Props) {
                           }}
                           style={
                             isStatus
-                              ? { ...selectCommon, ...pillStyle(tint, false), color: INK, ...killShadowSelect }
-                              : { ...fintexSelectStyleBase, color: INK, border: `2px solid ${BORDER}`, ...killShadowSelect }
+                              ? {
+                                  ...selectCommon,
+                                  ...pillStyle(tint, false),
+                                  color: INK,
+                                  ...killShadowSelect,
+                                }
+                              : {
+                                  ...fintexSelectStyleBase,
+                                  color: INK,
+                                  border: `2px solid ${BORDER}`,
+                                  ...killShadowSelect,
+                                }
                           }
                           onMouseEnter={(e) => {
-                            // NÃO reaplica shadow no hover
                             if (!isStatus) return;
                             Object.assign((e.currentTarget as HTMLSelectElement).style, {
                               ...pillStyle(tint, true),

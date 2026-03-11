@@ -92,7 +92,7 @@ export default function Topbar() {
             paddingTop: 0,
           }}
         >
-       Sistema de gestão - Pizza Blu
+       Sistema de gestão - Fatias de Pizza 
         </div>
       </div>
 
